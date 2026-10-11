@@ -1,8 +1,8 @@
 site_name: Acuario
 site_description: Multi AI Agent Source Code Auditing Sandbox
-site_url: https://devops-dd.github.io/acuario/
-repo_url: https://github.com/devops-dd/acuario
-repo_name: devops-dd/acuario
+site_url: https://dsci-in.github.io/acuario/
+repo_url: https://github.com/dsci-in/acuario
+repo_name: dsci-in/acuario
 edit_uri: edit/main/docs/
 
 theme:

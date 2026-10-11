@@ -1,7 +1,7 @@
 # Beyond the first audit
 
 > **You should already have `acuario audit` working.** If you haven't,
-> the [README](https://github.com/devops-dd/acuario#readme) walks you from `git clone` to a green run
+> the [README](https://github.com/dsci-in/acuario#readme) walks you from `git clone` to a green run
 > in five steps. This page is the companion: scenarios, env-var
 > alternatives to the wizard, per-task model routing, troubleshooting,
 > and the resume / inspect workflows in more depth.

@@ -92,10 +92,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/devops-dd/acuario"
-Repository = "https://github.com/devops-dd/acuario"
-Issues = "https://github.com/devops-dd/acuario/issues"
-Documentation = "https://github.com/devops-dd/acuario/tree/main/docs"
+Homepage = "https://github.com/dsci-in/acuario"
+Repository = "https://github.com/dsci-in/acuario"
+Issues = "https://github.com/dsci-in/acuario/issues"
+Documentation = "https://github.com/dsci-in/acuario/tree/main/docs"
 
 [project.scripts]
 acuario = "acuario:main"

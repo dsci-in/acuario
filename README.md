@@ -168,7 +168,7 @@ credentials, the Docker daemon, `docker compose`, and the external CLI tools
 ### 2. Install
 
 ```bash
-git clone https://github.com/devops-dd/acuario.git
+git clone https://github.com/dsci-in/acuario.git
 cd acuario
 
 # `uv` is recommended - it reads pyproject.toml + uv.lock and builds
