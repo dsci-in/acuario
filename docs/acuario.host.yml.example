@@ -1,0 +1,54 @@
+# acuario.host.yml - optional run recipe for the live exploit stage.
+#
+# Drop this file at the root of the app you are scanning to tell Acuario exactly
+# how to stand it up for live exploitation. It is only needed when Acuario's
+# auto-detection can't host your app on its own; when present it OVERRIDES
+# auto-detection (compose / Dockerfile / detected stack).
+#
+# You have two ways to describe the build:
+#   1. point at an existing Dockerfile, or
+#   2. give a base image + install steps + a start command to synthesize one.
+# Everything except one of those is optional.
+
+# --- Option 1: use an existing Dockerfile -----------------------------------
+# build:
+#   dockerfile: deploy/Dockerfile      # path relative to the repo root
+# port: 8080                           # the port the app listens on (else EXPOSE)
+
+# --- Option 2: synthesize from the stack ------------------------------------
+build:
+  base_image: python:3.12-slim
+  install:                             # each becomes a RUN line, in order
+    - pip install -r requirements.txt
+
+# The command that starts the app. IMPORTANT: bind 0.0.0.0 (not 127.0.0.1) so
+# the exploit sandbox can reach it over the shared network.
+start: "uvicorn main:app --host 0.0.0.0 --port 8000"
+
+# The port your start command listens on.
+port: 8000
+
+# Optional environment variables injected into the app container.
+env:
+  SECRET_KEY: dev-only-not-a-real-secret
+
+# --- Optional: a database the app needs -------------------------------------
+# Acuario runs this container next to the app on the same isolated network,
+# waits until it is ready, loads schema then seed, and injects connection_env
+# into the app so it can reach the DB at <alias>:<port>.
+database:
+  dialect: postgres                    # postgres | mysql | mssql
+  # image: postgres:16                 # optional; defaults from the dialect
+  # port: 5432                         # optional; defaults from the dialect
+  # alias: db                          # DNS name the app connects to (default: db)
+  env:                                 # container env (creds / db name)
+    POSTGRES_USER: app
+    POSTGRES_PASSWORD: app
+    POSTGRES_DB: app
+  schema: database/schema.sql          # loaded first (repo-relative)
+  seed: database/seed.sql              # loaded after schema (optional)
+  # The exact env your app reads to find the DB. If omitted, Acuario injects a
+  # best-effort common set (DATABASE_URL, DB_HOST, DB_PORT, DB_NAME, DB_USER,
+  # DB_PASSWORD) - set this explicitly if your app uses different names.
+  connection_env:
+    DATABASE_URL: "postgresql://app:app@db:5432/app"

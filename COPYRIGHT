@@ -1,0 +1,192 @@
+Acuario - Multi AI Agent Source Code Auditing Sandbox
+
+Copyright (C) 2026 Data Security Council of India <opensource@dsci.in>
+Copyright (C) 2026 Ajay Pandey <ajay.pandey@dsci.in>
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+Acuario is jointly owned by the copyright holders named above. Both holders
+must agree to any future change of licence or grant of separate licensing
+terms. Contributors retain copyright in their own contributions.
+
+================================================================================
+                                   NOTE
+================================================================================
+
+This file contains project-specific notices ONLY. It is not part of the GNU
+Affero General Public License and it does not add to, modify, qualify, or
+restrict the terms of that License in any way. The License itself is
+reproduced verbatim and unmodified in the file LICENSE.
+
+If anything in this file is ever read as conflicting with the LICENSE file,
+the LICENSE file governs.
+
+DO NOT MERGE THIS FILE INTO LICENSE. Keeping them separate is deliberate.
+The "What we ask of you" section below is a non-binding request; placed inside
+LICENSE it would read as a licence condition, would make automated licence
+detection fail, and - under AGPL section 7 - recipients would be entitled to
+delete it as an added restriction. Separate files, separate registers.
+
+================================================================================
+                                  LICENSE
+================================================================================
+
+Acuario is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+Acuario is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+The complete text of the License is in the file LICENSE at the root of this
+repository. Full text is also available at:
+<https://www.gnu.org/licenses/agpl-3.0.html>
+
+================================================================================
+                          WHAT THE LICENSE PERMITS
+================================================================================
+
+The License grants every recipient the freedom to run, study, modify, and
+redistribute this software, for any purpose and in any field of endeavour.
+This expressly includes commercial use, use inside for-profit organisations,
+and use in paid consulting or audit engagements.
+
+The License places no restriction on WHO may use the software or WHY. Its
+conditions attach to DISTRIBUTION and to NETWORK USE OF MODIFIED VERSIONS.
+
+INTERNAL USE - NO OBLIGATIONS
+Running Acuario, modified or not, inside your own organisation triggers
+nothing. Internal use is not conveying, and section 2 affirms unlimited
+permission to run the Program. You owe nobody source code, notice, or
+attribution. Audit your own code freely.
+
+IF YOU DISTRIBUTE IT
+You must provide recipients with the corresponding source, license the whole
+derivative work under the AGPL, document your changes with dates, pass along
+the License text and existing copyright notices, and preserve the warranty
+disclaimers. See LICENSE sections 4, 5, and 6.
+
+IF YOU RUN A MODIFIED VERSION AS A NETWORK SERVICE
+Section 13 is what distinguishes this License from the ordinary GPL. If you
+modify Acuario and let users interact with it remotely over a network, you
+must prominently offer those users the corresponding source of the version
+you are running, from a network server, at no charge.
+
+This obligation is triggered by network interaction rather than by
+distribution. No copy needs to change hands for it to apply. Hosting a
+modified Acuario as a service, internally-facing or public, means the people
+using that service are entitled to its source.
+
+WHAT THIS MEANS IN PRACTICE
+You may build a commercial offering around Acuario. You may not build a
+PROPRIETARY one. Improvements made to a version that other people interact
+with come back to the community, which is the outcome this project exists to
+produce.
+
+The authoritative wording is in LICENSE. This summary is for orientation
+only and is not a substitute for reading sections 4, 5, 6, and 13.
+
+================================================================================
+                    WHAT WE ASK OF YOU  (NOT LICENCE CONDITIONS)
+================================================================================
+
+READ THIS FIRST. Nothing in this section is a condition of the licence. It
+creates no obligation, adds nothing to the AGPL, and neither grants nor
+withholds any right. The AGPL in the file LICENSE is the complete and only
+licence for Acuario. If you disregard every word below, you remain in full
+compliance and we have no claim against you.
+
+We are stating a preference, not imposing a term. Honouring it is your call.
+
+WHY WE BOTHER SAYING IT
+
+Acuario is a research project. It was built to advance open security research
+and to be studied, learned from, and improved - not to be sold. We would
+rather say what we hope for and leave it to your judgement than pretend the
+licence says something it does not.
+
+WHAT WE HOPE YOU WILL DO
+
+  - Use Acuario for research, education, internal security work, and the
+    improvement of software security generally, rather than as the basis of
+    a commercial product sold to others.
+
+  - Give a different name to any substantially modified version, so that
+    security findings produced by your version are not mistaken for findings
+    produced by ours.
+
+  - Do not describe your work as endorsed, certified, accredited, or approved
+    by DSCI unless DSCI has actually said so.
+
+  - Cite the project if it contributes to published work.
+
+  - Send fixes and improvements upstream if you are willing. This is the
+    whole reason the project is public.
+
+The naming request matters more than the others, and not for commercial
+reasons. Acuario produces security findings that people act on. A modified
+version returning different results under the same name misleads its users
+about who stands behind those results. That is a question of honest
+provenance, and it is the one item we would genuinely urge you to respect
+even if you ignore the rest.
+
+WHAT WE ARE NOT DOING
+
+We are not registering trademarks, tracking copies, monitoring forks, or
+policing compliance beyond the licence itself. We will not pursue anyone for
+declining any of the above. This is a research project run by people with
+other work to do.
+
+WHAT THE LICENCE ACTUALLY PERMITS
+
+To be unambiguous, because the two sections above could otherwise be read
+together as a restriction: the AGPL permits commercial use, resale, paid
+hosting, and use inside for-profit organisations. Our preference above does
+not change that and is not enforceable against you. The AGPL's binding
+requirements are the source-disclosure obligations in sections 4, 5, 6, and
+13 - nothing more.
+
+Questions, or to discuss use of the DSCI name: opensource@dsci.in
+
+================================================================================
+                              WARRANTY & LIABILITY
+================================================================================
+
+This software is provided "AS IS", without warranty of any kind. See sections
+15, 16, and 17 of the License for the binding disclaimer of warranty and
+limitation of liability.
+
+Acuario is an automated source code auditing tool. Its findings are advisory
+and are not a substitute for expert human security review. No representation
+is made that it will detect any particular vulnerability, or that code it
+reports as clean is free of defects.
+
+================================================================================
+                              THIRD-PARTY SOFTWARE
+================================================================================
+
+Acuario incorporates and depends on third-party components that remain under
+their own licences. Those licences and the corresponding attributions are
+listed in THIRD-PARTY-NOTICES.md.
+
+Nothing in this file or in the LICENSE file diminishes the rights you hold in
+those third-party components under their respective licences.
+
+================================================================================
+                                  CONTACT
+================================================================================
+
+Project and licensing enquiries: opensource@dsci.in
+Security disclosures:            see SECURITY.md
+
+================================================================================
+
+Copyright (C) 2026 Data Security Council of India.
+Copyright (C) 2026 Ajay Pandey.
+Licensed under the GNU Affero General Public License v3.0 or later.
