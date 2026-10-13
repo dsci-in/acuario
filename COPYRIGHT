@@ -1,7 +1,6 @@
 Acuario - Multi AI Agent Source Code Auditing Sandbox
 
 Copyright (C) 2026 Data Security Council of India <opensource@dsci.in>
-Copyright (C) 2026 Ajay Pandey <ajay.pandey@dsci.in>
 
 SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -188,5 +187,4 @@ Security disclosures:            see SECURITY.md
 ================================================================================
 
 Copyright (C) 2026 Data Security Council of India.
-Copyright (C) 2026 Ajay Pandey.
 Licensed under the GNU Affero General Public License v3.0 or later.

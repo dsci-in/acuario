@@ -34,7 +34,6 @@ def _license_notice() -> str:
     return (
         f"Acuario {__version__} - Multi AI Agent Source Code Auditing Sandbox\n"
         "Copyright (C) 2026 Data Security Council of India\n"
-        "Copyright (C) 2026 Ajay Pandey\n"
         "\n"
         "This program comes with ABSOLUTELY NO WARRANTY. This is free software,\n"
         "and you are welcome to redistribute it under the terms of the GNU Affero\n"
@@ -57,7 +56,7 @@ def _startup_notice() -> str:
     """AGPL section 5(d) short notice shown on the interactive startup screen."""
     return (
         f"Acuario {__version__} - Copyright (C) 2026 Data Security Council of "
-        "India, Ajay Pandey\n"
+        "India\n"
         "Free software under the GNU AGPL v3.0-or-later - with ABSOLUTELY NO "
         "WARRANTY.\n"
         "Run [bold]acuario --license[/bold] for the full notice."

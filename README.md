@@ -376,4 +376,3 @@ naming, attribution, and commercial use - see [`COPYRIGHT`](COPYRIGHT). They
 are preferences, not licence conditions.
 
 Copyright (C) 2026 Data Security Council of India.
-Copyright (C) 2026 Ajay Pandey.

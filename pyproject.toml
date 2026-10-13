@@ -11,10 +11,9 @@ license = "AGPL-3.0-or-later"
 requires-python = ">=3.10"
 authors = [
     { name = "Data Security Council of India", email = "opensource@dsci.in" },
-    { name = "Ajay Pandey", email = "ajay.pandey@dsci.in" },
 ]
 maintainers = [
-    { name = "Ajay Pandey", email = "ajay.pandey@dsci.in" },
+    { name = "Data Security Council of India", email = "opensource@dsci.in" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
