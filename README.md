@@ -106,8 +106,9 @@ No content is truncated.
 
 ```
 acuario inspect audit-3eff431d
-> list --severity critical
-> show analyzer-1d1e8bb5
+> triage                     # findings ranked by priority (severity+evidence)
+> list --severity critical   # or: --sort rank, --plain, --ids-only
+> show analyzer-1d1e8bb5     # full detail + validation (a bare row# or id works too)
 > why analyzer-1d1e8bb5      # LLM explains the reasoning chain
 > skeptic analyzer-1d1e8bb5  # accepted or refuted, and why
 > critic                     # reflective-critic leads for this session
@@ -116,6 +117,8 @@ acuario inspect audit-3eff431d
 > exploit analyzer-1d1e8bb5  # PoC transcript and impact
 > related analyzer-1d1e8bb5  # sibling findings from the same cluster
 ```
+
+Type `help` at the prompt for the full command list.
 
 See [`docs/lab.md`](docs/lab.md) for the full lab walkthrough.
 
@@ -354,6 +357,12 @@ ruff format --check acuario/ tests/
 mypy --follow-imports=silent acuario/findings acuario/scanner \
     acuario/capabilities.py acuario/agent/tools acuario/core
 ```
+
+## Contributing
+
+Contributions are welcome - see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the DCO
+sign-off and dependency rules. The people who build and contribute to Acuario are
+credited in [`CONTRIBUTORS.md`](CONTRIBUTORS.md).
 
 ## Acknowledgements
 
