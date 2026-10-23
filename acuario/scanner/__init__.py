@@ -8,7 +8,7 @@ A file-parallel agent-driven discovery pipeline:
     → exploit (sandboxed PoC, gated on evidence_level >= crash_reproduced)
     → report (SARIF + markdown + JSON)
 
-Public entry points: ScanRunner (programmatic), `acuario scanner`
+Public entry points: ScanRunner (programmatic), `acuario audit`
 (CLI), and `hunt_source_code` (interactive @tool).
 """
 

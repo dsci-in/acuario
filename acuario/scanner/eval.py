@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from acuario.findings.types import canonical_findings
+
 logger = logging.getLogger(__name__)
 
 
@@ -309,11 +311,18 @@ def analyze_session(session_dir: Path, annotations: dict | None = None) -> EvalR
     findings = list(findings_doc.get("findings") or [])
 
     by_source, recal, ev_levels = _source_severity_evidence(findings)
+    # Headline counts cover the canonical set only - the same set inspect / report
+    # show, and history now reconciles to from findings.json. variant_loop is a
+    # default-OFF pattern-match stage the reviewer rejects at ~100%, so counting its
+    # 0%-verified rows would drag the headline rate down. (The historical DB is a
+    # dedup cache; its raw COUNT(*) can differ, which is why history reads the
+    # report's findings.json when it is on disk.) by_source still lists variant_loop.
+    canonical = canonical_findings(findings)
     report = EvalReport(
         session_id=findings_doc.get("session_id") or manifest.get("session_id") or session_dir.name,
         endpoint_label=(manifest.get("cost_summary") or {}).get("endpoint_label", ""),
-        total_findings=len(findings),
-        verified_findings=sum(1 for f in findings if f.get("verified")),
+        total_findings=len(canonical),
+        verified_findings=sum(1 for f in canonical if f.get("verified")),
         by_source=by_source,
         severity_recalibration=recal,
         evidence_levels=ev_levels,

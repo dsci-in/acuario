@@ -38,10 +38,11 @@ from urllib.parse import urlparse
 
 from rich.console import Console
 from rich.markup import escape
-from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from acuario import __version__ as cw_version
+from acuario.ui import theme
 
 # --- Result type ---------------------------------------------------------
 
@@ -50,14 +51,6 @@ STATUS_OK = "ok"
 STATUS_WARN = "warn"
 STATUS_ERR = "err"
 STATUS_SKIP = "skip"
-
-_STATUS_GLYPHS = {
-    STATUS_OK: ("[green]✓[/green]", "green"),
-    STATUS_WARN: ("[yellow]![/yellow]", "yellow"),
-    STATUS_ERR: ("[red]✗[/red]", "red"),
-    STATUS_SKIP: ("[dim]·[/dim]", "dim"),
-}
-
 
 @dataclass
 class DoctorCheck:
@@ -70,8 +63,9 @@ class DoctorCheck:
     hint: str = ""
 
     @property
-    def glyph(self) -> str:
-        return _STATUS_GLYPHS[self.status][0]
+    def glyph(self) -> Text:
+        """The themed status mark (✓ / ! / ✗ / ·) from the shared design kit."""
+        return theme.status_mark(self.status)
 
 
 @dataclass
@@ -93,10 +87,10 @@ def add_parser(subparsers):
         "doctor",
         help="Run environment health checks and print a diagnosis",
         description=(
-            "Probes Python / Acuario / LLM credentials / Docker / external "
-            "tools / filesystem / optional extras and prints a green-yellow-red "
-            "summary. Exit code is 0 if every check is ok or warn, 1 if any "
-            "required check is in error state."
+            "Probes Python / Acuario / LLM credentials / Docker / external tools /\n"
+            "filesystem / optional extras and prints a green-yellow-red summary.\n"
+            "Exit code is 0 if every check is ok or warn, 1 if any required check\n"
+            "is in error state."
         ),
     )
     parser.add_argument(
@@ -117,7 +111,11 @@ def handle(cli, args) -> None:
     from acuario.ui.cli import BANNER
 
     console: Console = cli.console
-    console.print(BANNER, style="bold cyan")
+    # --json is a machine-output contract: nothing but JSON may reach stdout, so
+    # the banner is suppressed in that mode (it would otherwise prepend ASCII art
+    # to the payload a `jq` consumer parses).
+    if not args.json:
+        console.print(theme.brand_banner(BANNER, console=console))
 
     sections: list[DoctorSection] = [
         _check_python_and_acuario(),
@@ -551,7 +549,6 @@ def _check_optional_extras() -> DoctorSection:
             "vector",
             "Vector memory for mechanism store (TF-IDF fallback works without this)",
         ),
-        ("fastapi", "web", "REST + WebSocket server (`acuario webui`)"),
         ("pymetasploit3", "metasploit", "Metasploit RPC bridge for exploit tools"),
         (
             "chromadb",
@@ -685,13 +682,14 @@ def _print_rich(console: Console, sections: list[DoctorSection]) -> None:
     for section in sections:
         table = Table(
             title=section.title,
-            title_style="bold",
+            title_style="table.title",
+            title_justify="left",
             show_header=False,
             box=None,
             padding=(0, 1),
         )
         table.add_column("", width=2)
-        table.add_column("name", style="bold", min_width=20)
+        table.add_column("name", style="ident", min_width=20)
         table.add_column("detail", overflow="fold")
 
         for check in section.checks:
@@ -705,18 +703,34 @@ def _print_rich(console: Console, sections: list[DoctorSection]) -> None:
         console.print(table)
         console.print()
 
-    # Summary
-    summary_parts = []
-    if totals[STATUS_OK]:
-        summary_parts.append(f"[green]{totals[STATUS_OK]} ok[/green]")
-    if totals[STATUS_WARN]:
-        summary_parts.append(f"[yellow]{totals[STATUS_WARN]} warnings[/yellow]")
+    # Overall verdict: errors dominate, then warnings, else a clean pass. The
+    # verdict badge + panel border encode the state so the result reads at a
+    # glance (shape/label carry it too, for CVD-safety and NO_COLOR).
     if totals[STATUS_ERR]:
-        summary_parts.append(f"[red]{totals[STATUS_ERR]} errors[/red]")
-    if totals[STATUS_SKIP]:
-        summary_parts.append(f"[dim]{totals[STATUS_SKIP]} skipped[/dim]")
-    summary = " · ".join(summary_parts) or "(no checks ran)"
-    console.print(Panel(summary, title="Summary", border_style="cyan"))
+        verdict, kind = "FAIL", "danger"
+    elif totals[STATUS_WARN]:
+        verdict, kind = "WARN", "warn"
+    else:
+        verdict, kind = "PASS", "success"
+
+    body = Text()
+    body.append(f" {verdict} ", style=f"reverse {kind}")
+    body.append("  ")
+    first = True
+    for st, label, style in (
+        (STATUS_OK, "ok", "success"),
+        (STATUS_WARN, "warnings", "warn"),
+        (STATUS_ERR, "errors", "danger"),
+        (STATUS_SKIP, "skipped", "muted"),
+    ):
+        if totals[st]:
+            if not first:
+                body.append(" · ", style="faint")
+            body.append(f"{totals[st]} {label}", style=style)
+            first = False
+    if first:
+        body.append("(no checks ran)", style="muted")
+    console.print(theme.panel(body, title="Doctor summary", kind=kind))
 
 
 def _print_json(console: Console, sections: list[DoctorSection]) -> None:
@@ -738,4 +752,7 @@ def _print_json(console: Console, sections: list[DoctorSection]) -> None:
             for section in sections
         ],
     }
-    console.print(json.dumps(payload, indent=2))
+    # Builtin print, NOT console.print: the themed console would parse bracket
+    # tokens in hints (e.g. "pip install acuario[all]") as markup and reflow long
+    # lines, corrupting the JSON. The machine contract needs exact bytes.
+    print(json.dumps(payload, indent=2))

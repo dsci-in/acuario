@@ -390,7 +390,25 @@ def resume_session(
     if not db.exists():
         raise FileNotFoundError(f"Historical-findings DB not found at {db}")
 
-    out_dir = Path(output_dir) if output_dir else acuario_home() / "results" / "scanner"
+    if output_dir:
+        out_dir = Path(output_dir)
+    else:
+        # Resolve the audit's own results dir the same way audit/inspect/eval do,
+        # so `report` lands beside the audit's artifacts instead of a separate
+        # ~/.acuario/results copy. Prefer the recorded session path (works from any
+        # cwd); the recorded path is the session dir (…/scanner/<id>) and the
+        # reporter re-appends <id>, so hand back its parent. Otherwise fall back to
+        # the default results base - cwd-relative (./results/scanner) in a dev
+        # checkout, ~/.acuario/results on an installed copy - exactly as `audit`.
+        from acuario.core.config import default_results_dir
+        from acuario.scanner.session_index import lookup_session_path
+
+        recorded = lookup_session_path(session_id)
+        out_dir = (
+            recorded.parent
+            if recorded is not None
+            else Path(default_results_dir("scanner"))
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     repo_path = Path(repo_path or ".").resolve()

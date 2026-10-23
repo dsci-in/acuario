@@ -1,322 +1,252 @@
-# Acuario
+<p align="center">
+  <img src="https://www.dsci.in/files/content/media/images/2026/acuario-banner.png" alt="Project Acuario - a multi-agent source code auditing sandbox" width="820">
+</p>
 
-```
- █████╗  ██████╗██╗   ██╗ █████╗ ██████╗ ██╗ ██████╗
-██╔══██╗██╔════╝██║   ██║██╔══██╗██╔══██╗██║██╔═══██╗
-███████║██║     ██║   ██║███████║██████╔╝██║██║   ██║
-██╔══██║██║     ██║   ██║██╔══██║██╔══██╗██║██║   ██║
-██║  ██║╚██████╗╚██████╔╝██║  ██║██║  ██║██║╚██████╔╝
-╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝ ╚═════╝
-    Multi AI Agent Source Code Auditing Sandbox
-```
+<p align="center"><strong>Finds the bug · Writes the exploit · Proves it's real</strong></p>
 
-**Multi AI Agent Source Code Auditing Sandbox.** Built on `genai-pyo3`,
-a native Rust-backed LLM runtime that speaks every major provider -
-Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, vLLM, Together, Groq,
-DeepSeek, MiniMax, or any OpenAI-compatible endpoint.
+Acuario audits source code the way an attacker would, and it does not stop at
+pointing out a weakness. It finds the vulnerability, writes a working exploit
+for it, stands your application up inside a live but sealed-off sandbox, and
+fires that exploit at the running app to see whether the bug is actually real.
+Throughout, it records every syscall, request, and agent action inside the
+sandbox, so what lands on your desk is proof, not a wall of maybe-bugs.
 
-Acuario does one thing: **find vulnerabilities in source code**, with
-sandboxed analyzer agents, an adversarial reviewer, optional
-proof-of-concept generation, deterministic dependency (SCA) scanning, and
-resumable runs that survive crashes.
+Behind each run is a team of language-model agents working in disposable Docker
+containers, an adversarial reviewer that argues against every candidate finding
+before it is allowed to stand, and a deterministic dependency scan for
+known-vulnerable packages. Acuario is provider-agnostic: a Rust-backed runtime
+(`genai-pyo3`) lets the same pipeline run against any major commercial API or a
+model you host yourself, with no code changes and the same orchestration cost.
+When you run locally the summary shows `$0.00` paid next to a reference quote for
+what the same token volume would have cost on a current frontier model.
 
-- **Source-code audit** - a per-file LLM analyzer agent runs inside a
-  Docker sandbox, calls a small tool set (read / search / record),
-  and produces findings. An adversarial reviewer runs a 4-axis
-  validation pass to weed out false positives. SARIF + Markdown + JSON
-  + a native PDF report drop into `./results/scanner/<session-id>/` (a git checkout) or
-  `~/.acuario/results/scanner/<session-id>/` (an installed package).
-- **Exploit confirmation** (default; disable with `--no-exploit`) - for
-  verified, crash-reproduced findings an exploit-dev agent generates a PoC
-  and **runs it inside the sandbox**, capturing the output as evidence and
-  upgrading the finding's evidence level when the PoC actually triggers the
-  bug. (The separate `--exploit` flag tells the per-file analyzers to
-  attempt exploit-writing during the hunt.)
-- **Resumable runs** - `acuario audit --resume <session-id>` picks
-  up from a saved state after any crash (network drop, sandbox FD
-  exhaustion, host reboot).
-- **Real-cost transparency** - runs on self-hosted endpoints (Ollama,
-  vLLM, LM Studio) report `$0.00` paid plus a "what this would have
-  cost on current frontier models (Claude Opus / OpenAI GPT-class)"
-  reference quote. Commercial APIs show real billing.
+### What a run leaves behind
+
+A finished audit writes a full report set (SARIF for your IDE and code-scanning,
+a Markdown write-up, a print-ready PDF, and machine-readable JSON) into
+`./results/scanner/<session-id>/` from a git checkout, or
+`~/.acuario/results/scanner/<session-id>/` from an installed package. Alongside
+the reports it keeps the complete paper trail: every agent's reasoning, the
+reviewer's verdicts, and the proof-of-concept transcripts. Any finding traces
+back to the exact step that produced it.
+
+### Scope and authorization
+
+Acuario is offensive tooling. Point it only at code you own or have written
+permission to examine. Choosing what is in scope, obtaining that permission, and
+handling whatever the tool surfaces are decisions that rest with the person
+running it, not with the tool.
 
 ---
 
-## The Acuario lab
+## The lab model
 
-Acuario is architected as a **multi-agent security research lab**.  The audit pipeline
-coordinates a team of specialist agents, each with a defined role, operating inside
-sandboxes that can checkpoint and roll back - rather than a single analyst reading
-files in sequence.
+The pipeline is organized like a small security research lab rather than a
+single reviewer. Specialist agents hand work between each other, and the
+sandboxes they run in can checkpoint and roll back, so a dead-end idea costs
+nothing to undo.
 
-### Coordinated agent team (`acuario/lab/agents/`)
+**The agents** (`acuario/lab/agents/`). A *skeptic* sits between the analyzer
+pool and the findings pool and has to produce a concrete refutation, a real code
+reference or a precondition that does not hold, before a finding is admitted;
+every accept and reject is logged with its full prompt and response. A
+*reflective critic* runs after each analyzer session and asks the model to
+re-read its own trajectory for what it missed, feeding low-confidence leads back
+through the normal validation flow. A *cross-file orchestrator* reads the
+findings pool plus a structural map of the codebase after the per-file pass and
+emits investigation plans for shared-state and boundary bugs, which then run as
+a follow-up hunt.
 
-Three agents collaborate around the core audit pipeline:
+**The sandbox** (`acuario/lab/sandbox/`). To stand a live target up, Acuario
+brings the application onto an isolated, egress-free Docker network and lets the
+exploit agent reach it by service name, so a proof of concept runs against a
+real instance. Before each attempt the container is snapshotted with a Docker
+commit, and a dead-end hypothesis reverts instantly. When `strace` is available,
+per-command instrumentation records the real syscalls an action made and writes
+them to `behavior_events.jsonl`, catching, for example, a bare
+`open("/etc/passwd")` that never appears in the agent's own transcript. Without
+`strace` it degrades to a regex behavior monitor.
 
-- **Skeptic gate** - adversarial agent inserted between the analyzer pool and the
-  findings pool.  Must produce a concrete refutation (a specific code reference,
-  a contradicting precondition) before any finding enters the pool.  Fires on every
-  finding; adversarial by construction.  Sees the finding, a source snippet, and
-  a cross-file context block (callers / callees / prior findings).  Every
-  decision - accept and refute - is persisted to `skeptic_log.jsonl` with the
-  full prompt and raw LLM response.
-- **Reflective critic** - after each analyzer session concludes, one extra LLM call
-  asks *"read your own trajectory - what did you miss?"*  Sees the analyzer's
-  existing findings, the source file, and the cross-file context.  Leads enter the
-  pool tagged `discovered_by="critic"` at low confidence, then go through the normal
-  validator/skeptic flow.  The lead-to-`Finding` conversion auto-extracts a code
-  snippet from the source file, so critic findings show real code rather than
-  placeholders.  Runs concurrently with the next file dispatch; no pipeline
-  serialization.
-- **Cross-file orchestrator** - reads the findings pool, the call graph, and a
-  structural map of every in-scope file (definitions, calls, callers, internal
-  deps) after the per-file pass.  Emits structured investigation plans for
-  shared-state and boundary bugs.  Plans **auto-execute** as a follow-up
-  subsystem-hunter pass; resulting findings are tagged with
-  `subsystem_source="orchestrator"` and the plan ID so they trace back to the
-  originating plan in `findings.json`.
+Every run also produces `team_discussion.md`: one document gathering each
+agent's reasoning on each finding, the analyzer's chain, the skeptic's verdict,
+the critic's notes, the reviewer's axis-by-axis rationale, and the exploit
+outcome, with nothing truncated.
 
-### Snapshottable sandbox (`acuario/lab/sandbox/`)
-
-The `SandboxSnapshotter` wraps `SandboxContainer` to add Docker-commit checkpoints.
-Before each exploit attempt the agent snapshots the container state; on a failed
-hypothesis it reverts instantly - enabling multi-hypothesis exploration without
-paying the sandbox rebuild cost for each variant.
-
-The `PtraceBehaviorMonitor` captures real syscalls via per-command
-instrumentation: when attached to the sandbox, every `container.exec()` call
-is wrapped with `strace -f -e trace=… -o /scratch/<id>.log -- <argv>`, and
-the resulting trace is read back and emitted to `behavior_events.jsonl`.
-This catches syscalls the regex `[behavior]` monitor cannot - a bare
-`open("/etc/passwd")` issued by the agent leaves a real syscall event even
-when nothing about it shows up in the agent's transcript.  Falls back to the
-regex monitor when `strace` is unavailable inside the sandbox image.
-
-### `team_discussion.md` - the multi-agent debate report
-
-Every audit also writes `team_discussion.md` - a single Markdown artifact
-that aggregates every agent's reasoning on every finding.  Per-finding
-sections show the analyzer's reasoning chain (collapsed in long sessions
-so the file stays scannable), the skeptic's verdict and full reasoning,
-the critic's origin notes when applicable, the reviewer's 4-axis verdict
-with rationales, and the exploit-dev outcome when `--exploit` was on.
-No content is truncated.
-
-### `acuario inspect` - interactive session explorer
-
-```
-acuario inspect audit-3eff431d
-> triage                     # findings ranked by priority (severity+evidence)
-> list --severity critical   # or: --sort rank, --plain, --ids-only
-> show analyzer-1d1e8bb5     # full detail + validation (a bare row# or id works too)
-> why analyzer-1d1e8bb5      # LLM explains the reasoning chain
-> skeptic analyzer-1d1e8bb5  # accepted or refuted, and why
-> critic                     # reflective-critic leads for this session
-> orchestrator               # cross-file plans and the findings they surfaced
-> fix analyzer-1d1e8bb5      # read-only unified-diff suggestion
-> exploit analyzer-1d1e8bb5  # PoC transcript and impact
-> related analyzer-1d1e8bb5  # sibling findings from the same cluster
-```
-
-Type `help` at the prompt for the full command list.
-
-See [`docs/lab.md`](docs/lab.md) for the full lab walkthrough.
-
-**Authorized use only.** Acuario is a dual-use offensive-security
-tool. Run it only against code you own or have explicit written
-authorization to audit. Operators are responsible for scope, legal
-authorization, and disclosure.
+`docs/lab.md` walks through the lab end to end.
 
 ---
 
-## Setup - get to a first audit in five steps
+## From clone to first audit
 
-Everything below this line is one linear flow. No need to open another
-doc to reach a green audit run.
+### 1. What you need installed
 
-### 1. Requirements
+- Python 3.10 or newer, and `git` (the scanner clones and reads the target).
+- `ripgrep` (`rg`), the analyzer's code-search tool. Required.
+- Docker Engine with the Compose v2 plugin. Agents run in disposable
+  containers, and the live-exploit stage brings target apps up with
+  `docker compose`. On most distributions Compose v2 is a **separate package**;
+  `docker.io` / `docker-ce` on its own does not include it.
+- Nice to have: `gh` (for `--auto-pr` / `--github-checks`) and `gdb`
+  (in-sandbox debugging).
 
-**System packages** - install these before the install step below:
-
-- **Python 3.10+**
-- **git** - the scanner clones and reads the target repository
-- **ripgrep** (`rg`) - the analyzer's fast code-search tool (required)
-- **Docker Engine + the Compose v2 plugin** - the analyzer and exploit-dev
-  agents run inside disposable sandbox containers, and the live-exploit stage
-  brings target apps up with `docker compose`. The Compose plugin is a
-  **separate package** from the engine on most distros (`docker.io` /
-  `docker-ce` alone does **not** include it).
-- Optional: **`gh`** (for `--auto-pr` / `--github-checks`), **`gdb`**
-  (in-sandbox debugging)
+On Debian or Ubuntu:
 
 ```bash
-# Debian / Ubuntu
 sudo apt install -y git ripgrep docker.io docker-compose-v2
-sudo usermod -aG docker "$USER"    # log out / back in so the group applies
-
-# macOS (Homebrew) - Docker Desktop bundles Compose v2
-brew install git ripgrep
-brew install --cask docker
+sudo usermod -aG docker "$USER"   # re-login so the group takes effect
 ```
 
-- **An LLM endpoint** - one of:
-  - An Anthropic / OpenAI / OpenRouter / Together / Groq / DeepSeek API key
-  - A local Ollama / LM Studio / vLLM server you control
-  - Any OpenAI-compatible endpoint (the wizard has a "custom" preset)
+On macOS, Docker Desktop already bundles Compose v2:
 
-After installing, run `acuario doctor` - it verifies Python, your LLM
-credentials, the Docker daemon, `docker compose`, and the external CLI tools
-(git, ripgrep, gh, gdb).
+```bash
+brew install git ripgrep && brew install --cask docker
+```
+
+You will also need an LLM endpoint: a commercial API key, a local server you
+run (Ollama, LM Studio, vLLM), or any OpenAI-compatible URL. The `setup` wizard
+in step 3 covers all of them.
 
 ### 2. Install
+
+`uv` is the smooth path. It reads `pyproject.toml` and the lock file and builds
+a pinned environment under `.venv/`. No Rust toolchain is needed, since the
+`genai-pyo3` runtime ships as prebuilt wheels.
 
 ```bash
 git clone https://github.com/dsci-in/acuario.git
 cd acuario
-
-# `uv` is recommended - it reads pyproject.toml + uv.lock and builds
-# the locked environment under .venv/. No Rust toolchain needed -
-# genai-pyo3 ships as prebuilt wheels.
 uv sync --all-extras
-source .venv/bin/activate     # fish: source .venv/bin/activate.fish
-
-acuario --version             # 2.0.0
-```
-
-If you don't have `uv`:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Or use plain pip (no lock-file pinning):
-
-```bash
-python3 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
+acuario --version
 ```
 
-### 3. Configure your LLM provider
+No `uv`? Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh`, or
+skip it and use a plain virtualenv with `pip install -e '.[dev]'` (you lose
+lock-file pinning).
 
-Run the interactive wizard. It picks a preset, prompts for credentials,
-runs an optional live test, and persists to `~/.acuario/config.yaml`.
+### 3. Point it at a model
+
+The wizard walks the whole provider decision, stores the result in
+`~/.acuario/config.yaml`, and can fire a live test before you leave it:
 
 ```bash
 acuario setup
 ```
 
-The menu lists Anthropic, OpenRouter, Ollama, LM Studio, vLLM, OpenAI
-(Chat / Responses / OAuth), Together, Groq, Fireworks, DeepSeek,
-MiniMax, plus a custom OpenAI-compatible catch-all. For local servers
-(Ollama / vLLM / LM Studio) the wizard auto-fetches the model list from
-your endpoint so you can pick by number instead of typing model names.
+Its menu covers Anthropic, OpenAI (Chat, Responses, and OAuth), OpenRouter,
+Together, Groq, Fireworks, DeepSeek, MiniMax, the local servers (Ollama, vLLM,
+LM Studio), and a custom catch-all for anything OpenAI-compatible. For the local
+servers it queries your endpoint for its model list so you can pick by number.
 
-### 4. Verify your environment
+### 4. Check the environment
 
 ```bash
 acuario doctor
 ```
 
-Doctor checks Python version, your LLM credentials, Docker daemon
-reachability + the `docker compose` plugin, external CLI tools
-(git, ripgrep, gh, gdb), filesystem
-permissions on `~/.acuario/`, and network reachability to your LLM
-endpoint. Green-yellow-red glyphs per check.
+Doctor probes your Python and Acuario versions, resolves the LLM provider,
+checks Docker reachability and the Compose plugin, looks for the external tools
+(`git`, `ripgrep`, `gh`, `gdb`), confirms `~/.acuario/` is writable, and tries
+the network path to your endpoint, then prints a single PASS / WARN / FAIL
+verdict. Add `--json` for a machine-readable version.
 
-### 5. Run your first audit
+### 5. Audit something
 
-Point `audit` at a local folder, an absolute path, or a remote git URL.
+`audit` accepts a local folder, an absolute path, or a remote git URL (which it
+clones for you).
 
 ```bash
-# Fast pass - static patterns + LLM prioritizer only (no analyzer pool).
-acuario audit . --depth quick
-
-# Real audit - full pipeline (analyzer pool + 4-axis reviewer + exploit-dev).
-acuario audit . --depth standard
-
-# Same, but also have the analyzers attempt exploit-writing during the hunt.
-acuario audit . --depth standard --exploit
-
-# Audit a GitHub repo (Acuario clones it).
+acuario audit . --depth quick       # fast triage, no analyzer pool
+acuario audit . --depth standard    # the real pipeline
 acuario audit https://github.com/example/project --depth standard
 ```
 
-That's it - you're auditing.
+Run `acuario help` for the command list, or `acuario help <command>` for any one
+of them.
 
 ---
 
-## What the depths actually do
+## Choosing a depth
 
-| Depth      | Stages run                                                                                          | Cost on commercial APIs |
-|------------|-----------------------------------------------------------------------------------------------------|------------------------|
-| `quick`    | Preprocessor + LLM prioritizer + static patterns (no analyzer pool / sandbox).                      | ~free (prioritizer)    |
-| `standard` | + LLM analyzer pool, 4-axis reviewer, taint + reachability, mechanism memory, exploit-dev. **Default.** | ~$10-50 (Claude Sonnet) |
-| `deep`     | + entry-point sharding, deeper promotion bands, analyzer ptrace monitoring.                          | higher                 |
+| Depth      | What it runs                                                                                        | Rough cost on a commercial API |
+|------------|-----------------------------------------------------------------------------------------------------|--------------------------------|
+| `quick`    | Preprocessor, LLM prioritizer, static patterns. No analyzer pool or sandbox.                        | close to free                  |
+| `standard` | Everything in `quick` plus the analyzer pool, the 4-axis reviewer, taint and reachability, mechanism memory, and exploit-dev. **Default.** | roughly \$10 to \$50 on Claude Sonnet |
+| `deep`     | Everything in `standard` plus entry-point sharding, wider promotion bands, and analyzer ptrace monitoring. | higher                         |
 
-Exploit-dev (sandboxed PoC generation on crash-reproduced findings) runs by
-default; disable it with `--no-exploit`. The variant loop is opt-in via
-`--variant-loop`. The separate `--exploit` flag makes the analyzers attempt
-exploit-writing during the hunt.
+Sandboxed proof-of-concept generation on crash-reproduced findings runs by
+default; turn it off with `--no-exploit`. The optional variant loop is
+`--variant-loop`, and the separate `--exploit` flag asks the analyzers to
+attempt exploit-writing during the hunt itself.
 
-For **live** PoCs the target app is stood up on an isolated, egress-free network
-so the exploit agent can hit it by service DNS. It is hosted from - in order - an
-`acuario.host.yml` recipe, a `docker-compose.yml`, a root `Dockerfile`, or an
-auto-detected stack (Python / Node), with a database sidecar provisioned when a
-schema is detected or the recipe asks. An app that can't be stood up (e.g. a
-Windows/.NET runtime, or an unknown stack) falls back to a static PoC without
-failing the run.
+For a **live** proof of concept the target app is brought up on an isolated,
+egress-free network and the exploit agent reaches it by service name. Acuario
+tries, in order, an `acuario.host.yml` recipe, a `docker-compose.yml`, a root
+`Dockerfile`, then an auto-detected Python or Node stack, adding a database
+sidecar when it sees a schema. Anything that cannot be stood up (a Windows/.NET
+runtime, an unfamiliar stack) falls back to a static proof without failing the
+run.
 
-## Where the results land
+## The files a run writes
 
-Every audit writes to `~/.acuario/results/scanner/<session-id>/`:
+Everything lands in the session directory:
 
-| File                       | Audience                                              |
-|----------------------------|-------------------------------------------------------|
-| `findings.sarif`           | IDE integration (VS Code, IntelliJ, GitHub Code Scanning) |
-| `report.md`                | Human-readable report                                 |
-| `report.pdf`               | Paginated, print-ready report (same substance as `report.md`) |
-| `findings.json`            | Programmatic / scripting consumers                    |
-| `manifest.json`            | Counts, repo URL, tokens, real cost + reference quote |
-| `team_discussion.md`       | Multi-agent debate per finding (full reasoning, no truncation; per-plan findings attributed back to their orchestrator plan) |
-| `skeptic_log.jsonl`        | Every skeptic decision with full prompt + LLM response |
-| `critic_log.jsonl`         | Every reflective-critic reflection with prompt + leads |
-| `orchestrator_log.jsonl`   | Cross-file plan emissions with full reasoning          |
-| `calibration.jsonl`        | Skeptic vs validator vs exploit-outcome agreement log (accuracy tuning) |
-| `behavior_events.jsonl`    | Real syscall events from `[ptrace]` per-command strace wrap |
-| `exploits/<id>/`           | Per-finding ReAct transcripts when `--exploit` is on  |
+| File                     | Who it's for                                                     |
+|--------------------------|------------------------------------------------------------------|
+| `findings.sarif`         | IDEs and GitHub code scanning                                    |
+| `report.md` / `report.pdf` | People: the same report, on-screen and print-ready             |
+| `findings.json`          | Scripts and downstream tooling                                  |
+| `manifest.json`          | Run metadata: counts, repo, tokens, real cost and reference quote |
+| `team_discussion.md`     | The multi-agent debate, per finding, untruncated                |
+| `skeptic_log.jsonl`      | Every skeptic decision, with prompt and response                |
+| `critic_log.jsonl`       | Every reflective-critic pass                                    |
+| `orchestrator_log.jsonl` | Cross-file plans and their reasoning                            |
+| `calibration.jsonl`      | Skeptic vs. validator vs. exploit-outcome agreement, for tuning |
+| `behavior_events.jsonl`  | Real syscalls captured by the per-command `strace` wrap         |
 
-The CLI summary at the end of each run shows tokens consumed, cost
-paid (real for commercial APIs, $0 for self-hosted), and reference
-quotes against current frontier models (Claude Opus / OpenAI GPT-class)
-when running locally.
+The end-of-run summary reports tokens used, cost paid (real on commercial APIs,
+`$0` self-hosted), and the frontier-model reference quote when you ran locally.
 
-## Inspecting past audits
+## Going back through past runs
 
-```bash
-acuario history                  # list every saved audit session
-acuario history --repo Project1  # filter by repo path
-acuario report <session-id>      # re-render reports (no LLM)
-acuario report <session-id> --verify   # also re-run the reviewer
-acuario sessions                 # alias of `history`
-```
-
-## Resuming a crashed run
-
-If an audit dies mid-run (network blip, FD pressure, host reboot),
-its findings are already persisted. Pick up where it stopped:
+`acuario history` is the way in. On a terminal it is interactive: sessions are
+numbered and newest-first, you open one by typing its number, `/text` filters by
+repo or id, and `n` / `p` page through a long list. Opening a session drops you
+into `inspect`, and `..` takes you back to the list.
 
 ```bash
-acuario audit --resume <session-id>            # full reviewer + reporter
-acuario audit --resume <session-id> --no-verify  # skip reviewer (~30s)
+acuario history                 # browse past runs (interactive)
+acuario history --repo myproj   # filter non-interactively
+acuario inspect <session-id>    # jump straight into one
 ```
 
-The serial verifier + auto-retry handles transient network errors;
-each `--resume` is idempotent.
+`inspect` is a REPL over a finished audit: `triage` and `list` to see findings,
+`show <n|id>` for the full detail of one, `why` and `fix` for LLM explanations,
+`..` to step back, `q` to leave. If a session's results directory has been moved
+or cleaned up, inspect reads its findings from the local database instead, so
+anything in `history` stays openable.
+
+Two more read-only commands round it out. `acuario report <session-id>` re-emits
+the reports without touching the model, and `acuario eval <session-id>` prints a
+proxy-metric scoreboard (per-source verified rates, skeptic-versus-validator
+agreement, and more).
+
+## Picking up a crashed run
+
+A run that dies partway through, whether a network blip, FD exhaustion, or a
+reboot, has already persisted its findings. Resume from where it stopped:
+
+```bash
+acuario audit --resume <session-id>              # re-review and re-report
+acuario audit --resume <session-id> --no-verify  # skip the reviewer, ~30s
+```
+
+The serial verifier retries transient network errors on its own, and every
+`--resume` is idempotent.
 
 ---
 
-## Architecture at a glance
+## How the pipeline fits together
 
 <p align="center">
   <img src="docs/assets/architecture.png"
@@ -324,64 +254,54 @@ each `--resume` is idempotent.
        width="960">
 </p>
 
-<p align="center"><sub>The audited <code>acuario audit</code> pipeline. Exploit-dev runs by default (disable with <code>--no-exploit</code>); the variant loop is opt-in (<code>--variant-loop</code>). The sandbox defaults to runc + <code>net=none</code>; gVisor, ptrace monitoring, and warm pools are opt-in.</sub></p>
+<p align="center"><sub>The <code>acuario audit</code> pipeline. Exploit-dev is on by default (<code>--no-exploit</code> disables it); the variant loop is opt-in (<code>--variant-loop</code>). The sandbox defaults to runc with <code>net=none</code>; gVisor, ptrace monitoring, and warm pools are opt-in.</sub></p>
 
-The analyzer agent's tool set lives under `acuario.agent.tools.hunt.*`
-and runs inside the sandbox during `acuario audit`. The CLI surface
-is the audit pipeline plus eight utility commands: `setup`, `doctor`,
-`config`, `history`, `report`, `sessions`, `inspect`, `eval`. See
-[`docs/architecture.md`](docs/architecture.md) for the full pipeline,
-sandbox lifecycle, and the reviewer's 4-axis check.
+The analyzer's own tools live under `acuario.agent.tools.hunt.*` and run inside
+the sandbox during an audit. Around the `audit` command sit eight utility
+commands: `setup`, `doctor`, `config`, `history`, `report`, `sessions`,
+`inspect`, and `eval`. The internals, sandbox lifecycle, and the reviewer's
+4-axis check are documented in `docs/architecture.md`.
 
-## Going deeper
+## Reference docs
 
-The README above is everything you need to run the tool. The docs
-below are reference material for advanced workflows and provider
-specifics - read them when you need them, not as a precondition.
+This page is enough to run the tool. Reach for the rest when a specific need
+comes up, not before.
 
-| Doc                                              | What it covers                                                                                          |
-|--------------------------------------------------|---------------------------------------------------------------------------------------------------------|
-| [`docs/quickstart.md`](docs/quickstart.md)       | Advanced workflows beyond first run - env-var setup, per-task routing, troubleshooting, common scenarios |
-| [`docs/providers.md`](docs/providers.md)         | Per-provider recipes: Ollama, vLLM, OpenRouter, Anthropic, OpenAI, LM Studio, Together, Groq, DeepSeek  |
-| [`docs/cli.md`](docs/cli.md)                     | Every flag for every command                                                                            |
-| [`docs/architecture.md`](docs/architecture.md)   | Pipeline internals, sandbox lifecycle, reviewer's 4-axis check, resume mechanism                        |
+| What you're after                                 | Read                                     |
+|--------------------------------------------------|------------------------------------------|
+| Go past the first run: env vars, routing, troubleshooting | [`docs/quickstart.md`](docs/quickstart.md)       |
+| Set up a specific provider                        | [`docs/providers.md`](docs/providers.md)         |
+| Look up a flag                                     | [`docs/cli.md`](docs/cli.md)                     |
+| Understand the pipeline and sandbox internals     | [`docs/architecture.md`](docs/architecture.md)   |
+| Explore the lab agents and the debate report      | [`docs/lab.md`](docs/lab.md)                     |
 
-## Development
+## Working on Acuario
 
 ```bash
-uv sync --all-extras
-source .venv/bin/activate
+uv sync --all-extras && source .venv/bin/activate
 pytest -q
 ruff check acuario/ tests/
 ruff format --check acuario/ tests/
-mypy --follow-imports=silent acuario/findings acuario/scanner \
-    acuario/capabilities.py acuario/agent/tools acuario/core
 ```
 
-## Contributing
+Contributions are welcome; [`CONTRIBUTING.md`](CONTRIBUTING.md) has the DCO
+sign-off and the dependency rules, and contributors are listed in
+[`CONTRIBUTORS.md`](CONTRIBUTORS.md).
 
-Contributions are welcome - see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the DCO
-sign-off and dependency rules. The people who build and contribute to Acuario are
-credited in [`CONTRIBUTORS.md`](CONTRIBUTORS.md).
+## Notices and license
 
-## Acknowledgements
+The agentic approach Acuario takes was prompted by Anthropic's Glasswing, which
+showed what this kind of pipeline could do. Where that remained closed, Acuario
+is an independent, openly available build of the idea, aimed at finding and
+actually proving vulnerabilities inside well-contained sandboxes. It also reuses
+some MIT-licensed code; those attributions are recorded in
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
-Acuario incorporates MIT-licensed code originally authored by **Eric Hartford**
-(see [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)), and its design is
-foundationally inspired by **Anthropic's Glasswing**. Our thanks to both.
-
-## License
-
-Acuario is free software, licensed under the
-[GNU Affero General Public License v3.0 or later](LICENSE). Run
-`acuario --license` to print the notice in your terminal.
-
-You are free to use, study, modify, and share it. If you run a modified
-version as a network service, section 13 requires you to offer your users its
-source.
-
-Acuario is a research project. We also have some non-binding requests about
-naming, attribution, and commercial use - see [`COPYRIGHT`](COPYRIGHT). They
-are preferences, not licence conditions.
+The project is free software under the
+[GNU Affero General Public License v3.0 or later](LICENSE); `acuario --license`
+prints the notice. You may use, study, modify, and share it, and under section
+13, running a modified version as a network service means offering your users
+its source. A few non-binding requests about naming, attribution, and commercial
+use live in [`COPYRIGHT`](COPYRIGHT). They are preferences, not conditions.
 
 Copyright (C) 2026 Data Security Council of India.

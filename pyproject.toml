@@ -63,6 +63,7 @@ dependencies = [
     "tree-sitter-javascript>=0.21.0",
     "tree-sitter-go>=0.21.0",
     "tree-sitter-rust>=0.21.0",
+    "rich-argparse>=1.8.0",
 ]
 
 [project.optional-dependencies]

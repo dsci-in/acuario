@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
+from acuario.findings.types import canonical_findings
 from acuario.observability.telemetry import CostTracker
 from acuario.runners.cicd.sarif import SARIFGenerator
 
@@ -22,6 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 _EVIDENCE_RANK = {level: idx for idx, level in enumerate(EVIDENCE_LEVELS)}
+
+
+def _fence(text: str) -> str:
+    """A backtick run longer than any inside ``text`` (minimum 3), so an embedded
+    code fence in a snippet / crash evidence can't break out of the block."""
+    longest = max((len(m) for m in re.findall(r"`+", text or "")), default=0)
+    return "`" * max(longest + 1, 3)
 
 
 def _sev_counts(findings: list[Finding]) -> dict[str, int]:
@@ -240,7 +249,9 @@ def _to_sarif_findings(findings: list[Finding]) -> list[dict]:
     result (no repeated alerts on the same line in code-scanning UIs).
     """
     out = []
-    for f in primaries(findings):
+    # Exclude variant_loop (default-OFF, reviewer-rejected noise) from SARIF so
+    # code-scanning UIs show only the canonical findings, matching report.md.
+    for f in primaries(canonical_findings(findings)):
         out.append(
             {
                 "description": f.get("description", ""),
@@ -298,6 +309,12 @@ def _render_markdown(
     session_dir: Path | None = None,
 ) -> str:
     lines: list[str] = []
+    # Keep report.md to the canonical finding set (same as inspect / eval / the DB):
+    # variant_loop is a default-OFF pattern-match stage the reviewer rejects at
+    # ~100% and that is never persisted, so it must not pad the findings list or the
+    # severity/executive counts. findings.json (dumped elsewhere) stays raw.
+    findings = canonical_findings(findings)
+    verified_findings = canonical_findings(verified_findings)
     lines.append(f"# Acuario Audit Report - {session_id}")
     lines.append("")
 
@@ -472,7 +489,8 @@ def _render_markdown(
         lines.append("")
         lines.append(f"- **CWE:** {f.get('cwe', 'N/A')}")
         lines.append(f"- **Evidence:** {f.get('evidence_level', 'suspicion')}")
-        lines.append(f"- **Discovered by:** {f.get('discovered_by', 'unknown')}")
+        if f.get("discovered_by"):
+            lines.append(f"- **Discovered by:** {f['discovered_by']}")
         if f.get("verified") is True:
             lines.append("- **Verified:** yes")
         if f.get("alias_ids"):
@@ -494,20 +512,22 @@ def _render_markdown(
         lines.append(f.get("description", ""))
         if f.get("code_snippet"):
             lines.append("")
-            lines.append("```")
+            _snip_fence = _fence(f["code_snippet"])
+            lines.append(_snip_fence)
             lines.append(f["code_snippet"])
-            lines.append("```")
+            lines.append(_snip_fence)
             lines.append("")  # ensure separation from any following block
         if f.get("crash_evidence"):
             lines.append("")
             lines.append("**Crash evidence:**")
             lines.append("")
-            lines.append("```")
+            _crash_fence = _fence(f["crash_evidence"])
+            lines.append(_crash_fence)
             # J2 refinement: emit full crash evidence in report.md (the
             # exploit-dev step is the only thing that writes this field and
             # it's already bounded by the sandbox-execution captured output).
             lines.append(f["crash_evidence"])
-            lines.append("```")
+            lines.append(_crash_fence)
             lines.append("")  # ensure separation from any following block
         # All the per-finding metadata bullets go first as one cohesive
         # list.  The verifier counter-argument paragraph is rendered AFTER

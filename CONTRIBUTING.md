@@ -3,6 +3,8 @@
 Thanks for your interest in Acuario - Multi AI Agent Source Code Auditing
 Sandbox.
 
+Merged contributions are credited in [`CONTRIBUTORS.md`](CONTRIBUTORS.md).
+
 ## Licensing of contributions
 
 Acuario is licensed under the **GNU Affero General Public License v3.0 or later**

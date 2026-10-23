@@ -28,7 +28,26 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from rich.text import Text
+
 from acuario.observability.telemetry import CostTracker
+from acuario.ui.theme import (
+    GLYPH_ACCEPT,
+    GLYPH_ALERT,
+    GLYPH_COMPLETE,
+    GLYPH_ENGAGE,
+    GLYPH_EVENT,
+    GLYPH_REFUTE,
+    GLYPH_SNAP,
+    SEVERITIES,
+    SEVERITY_ORDER,
+    escape,
+    kv_table,
+    normalize_severity,
+    section_rule,
+    severity_badge,
+    supports_unicode,
+)
 
 # ---------------------------------------------------------------------------
 # Stage vocabulary
@@ -56,14 +75,10 @@ STAGE_PREFIXES: dict[str, str] = {
     "acuario.scanner.callgraph": "context",
 }
 
-# Glyphs used in log output
-GLYPH_ENGAGE = "◐"
-GLYPH_COMPLETE = "●"
-GLYPH_ACCEPT = "✓"
-GLYPH_REFUTE = "✗"
-GLYPH_EVENT = "▸"
-GLYPH_SNAP = "◇"
-GLYPH_ALERT = "⚠"
+# Glyphs used in log output come from acuario.ui.theme (imported above), the
+# single source of truth, so the log-narration vocabulary and the themed console
+# surface never drift.  They stay importable as
+# `from acuario.ui.narration import GLYPH_*` for backward compatibility.
 
 # Stage banner displayed on the console when the active stage changes.
 _BANNER_WIDTH = 66
@@ -479,12 +494,17 @@ class AuditNarrator:
         target_short = (target[:62] + "…") if len(target) > 63 else target
         ep_short = (endpoint_label[:62] + "…") if len(endpoint_label) > 63 else endpoint_label
 
+        # escape(): target + endpoint are free text (a repo path /repo/[x]/app or
+        # an IPv6 endpoint http://[::1]:11434 would otherwise be parsed as markup
+        # and crash the run header).
         body_lines = [
-            f"[bold]target[/bold]    {target_short}",
+            f"[bold]target[/bold]    {escape(target_short)}",
             f"[bold]depth[/bold]     {depth:<14}  [bold]budget[/bold] {budget_label}",
-            f"[bold]endpoint[/bold]  {ep_short}",
+            f"[bold]endpoint[/bold]  {escape(ep_short)}",
             "[bold]pipeline[/bold]  preprocess → prioritize → analyze →",
-            "          [skeptic] → review → [orchestrate] → variant → report",
+            # \[ escapes the bracket so the [skeptic]/[orchestrate] labels render
+            # literally instead of being parsed (and eaten) as Rich markup tags.
+            r"          \[skeptic] → review → \[orchestrate] → variant → report",
             f"[bold]lab[/bold]       skeptic [cyan]{skeptic_flag}[/cyan] · "
             f"critic [cyan]{critic_flag}[/cyan] · "
             f"orchestrator [cyan]{orch_flag}[/cyan]",
@@ -500,7 +520,7 @@ class AuditNarrator:
             self.console.print(
                 Panel(
                     "\n".join(body_lines),
-                    title=f"[bold]Acuario · session {session_id}[/bold]",
+                    title=f"[bold]Acuario · session {escape(str(session_id))}[/bold]",
                     title_align="left",
                     border_style="cyan",
                     box=ROUNDED,
@@ -531,7 +551,7 @@ class AuditNarrator:
             return
         self._current_stage = stage
         bar = "═" * ((_BANNER_WIDTH - len(stage) - 10) // 2)
-        self.console.print(f"\n[dim]{bar} stage: {stage} {bar}[/dim]")
+        self.console.print(escape(f"\n{bar} stage: {stage} {bar}"), style="muted")
 
     # ------------------------------------------------------------------
     # End-of-run summary
@@ -549,89 +569,127 @@ class AuditNarrator:
         sid = result.session_id
         dur = _format_duration(result.duration_seconds)
 
-        self.console.print(f"\n[bold]═══ Audit complete · {sid} · {dur} ═══[/bold]\n")
+        self.console.print()
+        self.console.print(section_rule(f"Audit complete · {sid} · {dur}"))
 
-        # INVESTIGATION block
-        self.console.print("[bold]INVESTIGATION[/bold]")
-        self.console.print(f"  files ranked    {result.files_ranked}")
-        self.console.print(
-            f"  files hunted    {result.files_hunted:<14}  "
-            f"findings  {result.unique_finding_count}   "
-            f"(verified {result.unique_verified_count})"
-        )
-        # Severity on both bases (total / verified), unique loci, so the banner
+        # Severity-ramp strip (E26): one compact, CVD-safe line summarising the
+        # run's findings across the full SEVERITY_ORDER (shape + count per rung,
+        # each in its severity style), printed near the top so the headline risk
+        # picture reads before the detail blocks.  ASCII-folds on a non-UTF-8
+        # stream; omitted entirely when there are no findings.
+        strip = _severity_ramp(getattr(result, "findings", None), console=self.console)
+        if strip is not None:
+            self.console.print()
+            self.console.print(strip)
+
+        # INVESTIGATION block - a borderless key/value readout (kv_table auto-wraps
+        # every value in a Text, so nothing here can be markup-parsed).
+        findings_val = Text(str(result.unique_finding_count))
+        findings_val.append(f"   (verified {result.unique_verified_count})", style="muted")
+        # Severity on both bases (total / verified), unique loci, so the readout
         # matches the report's Severity Breakdown table instead of showing a
-        # single unlabeled number.
+        # single unlabeled number.  Built from internal counts via styled Text
+        # appends (never an f-stringed markup span).
+        sev_val = Text()
+        sev_val.append(f"{result.total_critical_count} critical", style="sev.critical")
+        sev_val.append(" · ")
+        sev_val.append(f"{result.total_high_count} high", style="sev.high")
+        sev_val.append(
+            f"   (verified: {result.critical_count} · {result.high_count})", style="muted"
+        )
+        self.console.print()
+        self.console.print(section_rule("INVESTIGATION"))
         self.console.print(
-            f"  severity        {result.total_critical_count} critical · "
-            f"{result.total_high_count} high"
-            f"  [dim](verified: {result.critical_count} · {result.high_count})[/dim]"
+            kv_table(
+                [
+                    ("files ranked", str(result.files_ranked)),
+                    ("files hunted", str(result.files_hunted)),
+                    ("findings", findings_val),
+                    ("severity", sev_val),
+                ]
+            )
         )
 
         # LAB block (only if any lab activity recorded)
-        if any(
-            [
-                lab.skeptic_accepted,
-                lab.skeptic_refuted,
-                lab.critic_leads,
-                lab.orchestrator_plans,
-                lab.snapshot_cycles,
-                lab.ptrace_events,
-            ]
-        ):
-            self.console.print("\n[bold]LAB[/bold]")
-            if lab.skeptic_accepted or lab.skeptic_refuted:
-                self.console.print(
-                    f"  skeptic gate    accepted {lab.skeptic_accepted} · "
-                    f"refuted {lab.skeptic_refuted}"
+        lab_pairs: list[tuple[str, Any]] = []
+        if lab.skeptic_accepted or lab.skeptic_refuted:
+            lab_pairs.append(
+                (
+                    "skeptic gate",
+                    f"accepted {lab.skeptic_accepted} · refuted {lab.skeptic_refuted}",
                 )
-            if lab.critic_leads:
-                self.console.print(
-                    f"  critic          added {lab.critic_leads} low-confidence leads "
-                    f"({lab.critic_verified} verified)"
+            )
+        if lab.critic_leads:
+            lab_pairs.append(
+                (
+                    "critic",
+                    f"added {lab.critic_leads} low-confidence leads "
+                    f"({lab.critic_verified} verified)",
                 )
-            if lab.orchestrator_plans:
-                self.console.print(
-                    f"  orchestrator    emitted {lab.orchestrator_plans} cross-file plans "
-                    f"({lab.orchestrator_findings} surfaced findings)"
+            )
+        if lab.orchestrator_plans:
+            lab_pairs.append(
+                (
+                    "orchestrator",
+                    f"emitted {lab.orchestrator_plans} cross-file plans "
+                    f"({lab.orchestrator_findings} surfaced findings)",
                 )
-            if lab.snapshot_cycles or lab.ptrace_events:
-                self.console.print(
-                    f"  sandbox         {lab.snapshot_cycles} snapshot/rollback cycles · "
-                    f"{lab.ptrace_events} ptrace events"
+            )
+        if lab.snapshot_cycles or lab.ptrace_events:
+            lab_pairs.append(
+                (
+                    "sandbox",
+                    f"{lab.snapshot_cycles} snapshot/rollback cycles · "
+                    f"{lab.ptrace_events} ptrace events",
                 )
+            )
+        if lab_pairs:
+            self.console.print()
+            self.console.print(section_rule("LAB"))
+            self.console.print(kv_table(lab_pairs))
 
         # LLM block
         if result.input_tokens or result.output_tokens:
             total = result.input_tokens + result.output_tokens
-            self.console.print("\n[bold]LLM[/bold]")
+            llm_pairs: list[tuple[str, Any]] = []
             if result.endpoint_label:
-                self.console.print(f"  endpoint        {result.endpoint_label}")
-            self.console.print(
-                f"  tokens          input {result.input_tokens:>12,} · "
-                f"output {result.output_tokens:>10,} (total {total / 1_000_000:.1f}M)"
+                # endpoint may be an IPv6 URL http://[::1]:11434; kv_table wraps a
+                # plain str value in a Text, so it is auto-escaped (never parsed).
+                llm_pairs.append(("endpoint", str(result.endpoint_label)))
+            llm_pairs.append(
+                (
+                    "tokens",
+                    f"input {result.input_tokens:,} · output {result.output_tokens:,} "
+                    f"(total {total / 1_000_000:.1f}M)",
+                )
             )
             if result.is_self_hosted_endpoint:
-                self.console.print(
-                    "  cost paid       [green]$0.00[/green]  [dim](self-hosted)[/dim]"
-                )
+                cost_val = Text("$0.00", style="success")
+                cost_val.append("  (self-hosted)", style="muted")
+                llm_pairs.append(("cost paid", cost_val))
                 # Same-workload quote against the current frontier lineup,
                 # priced from this run's token totals (one source of truth in
                 # CostTracker.REFERENCE_MODELS - names never drift from rates).
                 quotes = CostTracker.reference_quotes(result.input_tokens, result.output_tokens)
                 for i, (label, usd) in enumerate(quotes):
-                    lead = "  reference     " if i == 0 else "                "
-                    self.console.print(f"{lead}  {label:<26}~${usd:,.2f}")
+                    llm_pairs.append(
+                        ("reference" if i == 0 else "", f"{label:<26}~${usd:,.2f}")
+                    )
             else:
-                self.console.print(f"  cost paid       ${result.cost_usd:.4f}")
+                llm_pairs.append(("cost paid", f"${result.cost_usd:.4f}"))
+            self.console.print()
+            self.console.print(section_rule("LLM"))
+            self.console.print(kv_table(llm_pairs))
 
-        # OUTPUTS block
+        # OUTPUTS block - free-text paths stay escaped via escape() (the block's
+        # filesystem walk is unchanged; only its header is now a section rule).
         if result.output_paths or log_file_path:
-            self.console.print("\n[bold]OUTPUTS[/bold]")
+            self.console.print()
+            self.console.print(section_rule("OUTPUTS"))
             for fmt, path in (result.output_paths or {}).items():
-                self.console.print(f"  {fmt:<10} {path}")
+                self.console.print(f"  {fmt:<10} {escape(str(path))}")
             if log_file_path:
-                self.console.print(f"  {'log':<10} {log_file_path}")
+                self.console.print(f"  {'log':<10} {escape(str(log_file_path))}")
             # List each lab artifact that actually exists on disk.
             from pathlib import Path as _Path
 
@@ -651,22 +709,37 @@ class AuditNarrator:
                 ):
                     fpath = session_dir / fname
                     if gate and fpath.exists():
-                        self.console.print(f"  {'lab':<10} {fpath}")
+                        self.console.print(f"  {'lab':<10} {escape(str(fpath))}")
 
-        # TOP FINDINGS block
+        # TOP FINDINGS block.  Severity is a CVD-safe badge (shape + LABEL +
+        # colour); the file and description are appended as plain Text, so
+        # bracketed paths / LLM descriptions render verbatim (never parsed as
+        # markup) - the kit-wide replacement for the old hand-built markup.
         if result.findings:
-            self.console.print("\n[bold]TOP FINDINGS[/bold]")
+            self.console.print()
+            self.console.print(section_rule("TOP FINDINGS"))
             for f in result.findings[:5]:
-                sev = (f.get("severity_verified") or f.get("severity", "info")).upper()
-                ffile = f.get("file", "?")
-                line = f.get("line_number", "?")
-                desc = f.get("description", "")[:72]
-                self.console.print(f"  [{sev}]  {ffile}:{line:<6}  {desc}")
+                sev = f.get("severity_verified") or f.get("severity", "info")
+                ffile = str(f.get("file", "?"))
+                lineno = f.get("line_number", "?")
+                desc = str(f.get("description", "") or "")[:72]
+                row = Text("  ")
+                row.append_text(severity_badge(sev, width=11, console=self.console))
+                row.append("  ")
+                row.append(f"{ffile}:{lineno}", style="path")
+                row.append("  ")
+                row.append(desc)
+                self.console.print(row)
 
-        # NEXT block
-        self.console.print(
-            f"\n[bold]NEXT[/bold]\n  acuario inspect {sid}   [dim]# chat with this audit[/dim]\n"
-        )
+        # NEXT block - header unified to a section rule; the command + hint are
+        # appended as styled Text so the session id is never markup-parsed.
+        self.console.print()
+        self.console.print(section_rule("NEXT"))
+        nxt = Text("  ")
+        nxt.append(f"acuario inspect {sid}", style="accent")
+        nxt.append("   # chat with this audit", style="muted")
+        self.console.print(nxt)
+        self.console.print()
 
     # ------------------------------------------------------------------
     # Formatter factory
@@ -717,6 +790,40 @@ class AuditNarrator:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _severity_ramp(findings: Any, *, console: Any) -> Text | None:
+    """Build the compact CVD-safe severity-ramp strip for the run summary (E26).
+
+    Tallies ``findings`` across the full :data:`SEVERITY_ORDER` (skipping
+    duplicate loci, exactly as ``ScanResult.unique_finding_count`` does, so the
+    strip total matches the INVESTIGATION block) and renders each rung as
+    ``shape count`` carried in its ``sev.<key>`` style.  The shape + count +
+    colour redundancy means the ramp survives ``NO_COLOR`` / colour-blindness,
+    and the shape ASCII-folds (``◆`` → ``!!`` …) on a non-UTF-8 stream.  Returns
+    ``None`` when there is nothing to summarise, so the caller can omit the line.
+    """
+    counts: dict[str, int] = {key: 0 for key in SEVERITY_ORDER}
+    for f in findings or []:
+        try:
+            if f.get("duplicate_of"):
+                continue
+            counts[normalize_severity(f.get("severity_verified") or f.get("severity"))] += 1
+        except Exception:
+            continue  # a malformed finding dict never breaks the summary
+    if not any(counts.values()):
+        return None
+
+    ascii_only = not supports_unicode(console)
+    strip = Text("  ")
+    strip.append("severity  ", style="muted")
+    for i, key in enumerate(SEVERITY_ORDER):
+        if i:
+            strip.append("   ")
+        spec = SEVERITIES[key]
+        shape = spec.ascii if ascii_only else spec.glyph
+        strip.append(f"{shape} {counts[key]}", style=spec.style)
+    return strip
 
 
 def _format_duration(seconds: float) -> str:

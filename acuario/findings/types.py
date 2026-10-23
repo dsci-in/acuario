@@ -80,6 +80,23 @@ def evidence_at_or_above(level: EvidenceLevel, threshold: EvidenceLevel) -> bool
     return _EVIDENCE_RANK[level] >= _EVIDENCE_RANK[threshold]
 
 
+def is_canonical(finding) -> bool:
+    """A finding counts toward the canonical set unless it is a variant_loop seed.
+
+    variant_loop is a default-OFF, reviewer-rejected pattern-match stage that is
+    never persisted to the historical DB; excluding it is what makes inspect /
+    eval / report / history agree on a session's finding count. Accepts a dict
+    (``findings.json`` row) or a :class:`Finding`.
+    """
+    getter = finding.get if hasattr(finding, "get") else lambda k, d=None: getattr(finding, k, d)
+    return getter("discovered_by") != "variant_loop"
+
+
+def canonical_findings(findings):
+    """The report-canonical subset of ``findings`` (drops variant_loop seeds)."""
+    return [f for f in findings if is_canonical(f)]
+
+
 # --- The unified Finding ----------------------------------------------------
 
 

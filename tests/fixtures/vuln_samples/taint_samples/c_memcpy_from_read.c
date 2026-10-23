@@ -15,7 +15,7 @@ int process_packet(int fd) {
     return frame[0];
 }
 
-/* Clean function — no source, no sink. */
+/* Clean function: no source, no sink. */
 int helper(int x) {
     return x * 2;
 }

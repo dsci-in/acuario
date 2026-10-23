@@ -104,7 +104,7 @@ class TestPayloadSerialization:
     def test_eval_progress_roundtrip(self):
         p = EvalProgressPayload(
             project="test-project",
-            config_name="glasswing_minimal",
+            config_name="baseline_minimal",
             run_index=2,
             runs_total=5,
             configs_completed=1,
@@ -113,7 +113,7 @@ class TestPayloadSerialization:
             cost_usd=3.0,
         )
         d = asdict(p)
-        assert d["config_name"] == "glasswing_minimal"
+        assert d["config_name"] == "baseline_minimal"
         assert d["run_index"] == 2
 
     def test_payloads_are_frozen(self):

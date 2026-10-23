@@ -20,6 +20,6 @@ def login_safe(username: str, password: str) -> bool:
 def search_books(title: str) -> list:
     conn = sqlite3.connect("app.db")
     cursor = conn.cursor()
-    # VULN: f-string SQL - sql_injection finding expected
+    # VULN: f-string SQL, sql_injection finding expected
     cursor.execute(f"SELECT id, title FROM books WHERE title LIKE '%{title}%'")
     return cursor.fetchall()

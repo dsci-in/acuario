@@ -494,6 +494,10 @@ class ScanRunner:
         self._gvisor_runtime = gvisor_runtime
         self._preprocessing = preprocessing
         self._seed_harness_crashes = seed_harness_crashes
+        # Live snapshot of findings for the optional progress dashboard to READ
+        # (populated per file during analyze via on_file_complete). Read-only to
+        # the dashboard; never affects the scan. Empty until the first file lands.
+        self.live_findings: list[Finding] = []
 
     def _inject_campaign_pool(
         self,
@@ -794,12 +798,16 @@ class ScanRunner:
                 # `acuario audit --resume`. INSERT OR IGNORE makes this and the
                 # end-of-pool batch ingest idempotent. Skipped under campaign
                 # (injected pool) - campaign owns bulk ingestion.
-                _on_file_complete = None
-                if historical_db is not None and self._injected_findings_pool is None:
-
-                    def _on_file_complete(file_findings: list[Finding]) -> None:
-                        if not file_findings:
-                            return
+                def _on_file_complete(file_findings: list[Finding]) -> None:
+                    if not file_findings:
+                        return
+                    # Feed the live progress snapshot (dashboard reads this). Guarded
+                    # so a dashboard/accounting hiccup can never affect the scan.
+                    try:
+                        self.live_findings.extend(file_findings)
+                    except Exception:
+                        pass
+                    if historical_db is not None and self._injected_findings_pool is None:
                         try:
                             historical_db.ingest_campaign(
                                 file_findings,
@@ -864,6 +872,7 @@ class ScanRunner:
                 )
                 try:
                     all_findings = await pool.arun()
+                    self.live_findings = all_findings  # authoritative snapshot (dashboard reads it)
                     self._analyzer_ptrace_events = pool.analyzer_ptrace_events
                     logger.info(
                         "[analyze] ● pool complete · %d finding(s) collected", len(all_findings)
@@ -1049,6 +1058,7 @@ class ScanRunner:
             # Promote static findings into the all_findings list so depth=quick
             # output is still useful when no analyzer llm is available
             all_findings = self._merge_static_findings(all_findings, preprocess_result)
+            self.live_findings = all_findings  # include merged static findings in the live tally
 
             # 3.5. Persist findings to historical DB
             # Skip when running under campaign - campaign handles bulk ingestion.
@@ -1220,6 +1230,7 @@ class ScanRunner:
             cleared_findings = [f for f in all_findings if _is_no_vulnerability_finding(f)]
             if cleared_findings:
                 all_findings = [f for f in all_findings if not _is_no_vulnerability_finding(f)]
+                self.live_findings = all_findings  # keep the live tally in sync after filtering
                 logger.info(
                     "[review] cleared %d no-vulnerability record(s) (finding_type=none) "
                     "before verification",
@@ -1542,6 +1553,41 @@ class ScanRunner:
             # `verified` subset sees the same markers.
             annotate_duplicate_loci(all_findings)
 
+            # 5.9. Reconcile the historical DB with the final canonical set.
+            # The 3.5 ingest ran (and closed the DB) before the subsystem hunt and
+            # SCA, so findings from those post-pool stages never reached the
+            # cross-campaign dedup cache - leaving `history`'s DB-fallback count
+            # short for sessions that used them. Re-ingest the canonical set now:
+            # INSERT OR IGNORE makes already-persisted rows no-ops, adds the
+            # subsystem / SCA rows, and canonical_findings keeps variant_loop out.
+            # Standalone only (campaigns own ingest); best-effort, never fails the run.
+            if (
+                historical_db is not None
+                and self._injected_findings_pool is None
+                and self._historical_db_path
+            ):
+                try:
+                    from acuario.findings.types import canonical_findings
+
+                    from .historical_findings_db import HistoricalFindingsDB
+
+                    _recon_db = HistoricalFindingsDB(path=self._historical_db_path)
+                    try:
+                        _added = _recon_db.ingest_campaign(
+                            canonical_findings(all_findings),
+                            repo_url=self.repo_url,
+                            session_id=self._session_id,
+                        )
+                        if _added:
+                            logger.info(
+                                "[audit] ▸ reconciled %d post-pool finding(s) to historical DB",
+                                _added,
+                            )
+                    finally:
+                        _recon_db.close()
+                except Exception:
+                    logger.warning("Historical DB reconcile failed", exc_info=True)
+
             # 6. Report
             self._emit_stage("report", "started", findings_so_far=len(all_findings))
             _pool_stats = findings_pool.pool_stats() if findings_pool is not None else None
@@ -1690,6 +1736,12 @@ class ScanRunner:
     def _ensure_output_dir_layout(self) -> Path:
         session_dir = Path(self.output_dir) / self._session_id
         session_dir.mkdir(parents=True, exist_ok=True)
+        # Record where this session's artifacts live so `inspect` / `eval` can
+        # find them later regardless of the directory the audit ran from
+        # (best-effort; never fails the run).
+        from .session_index import record_session_path
+
+        record_session_path(self._session_id, session_dir)
         return session_dir
 
     async def _verify_v1(
@@ -2230,6 +2282,7 @@ class ScanRunner:
     ) -> ScanResult:
         """depth=quick exit - only static findings, no LLM analyzers."""
         all_findings = self._merge_static_findings([], preprocess_result)
+        self.live_findings = all_findings  # static findings in the live tally (quick mode)
         annotate_duplicate_loci(all_findings)  # same-locus dedup markers
         # compute duration BEFORE writing the report so it can land
         # in report.md's Executive Summary and LLM Usage sections.

@@ -304,9 +304,16 @@ class TestWriteConfig:
 
 class TestDoctorResult:
     def test_check_glyph_matches_status(self):
-        assert "green" in DoctorCheck("x", STATUS_OK).glyph
-        assert "yellow" in DoctorCheck("x", STATUS_WARN).glyph
-        assert "red" in DoctorCheck("x", STATUS_ERR).glyph
+        # .glyph is a themed Text status mark (shape + semantic style). Assert the
+        # semantic style name (encoding-independent) and accept either glyph tier
+        # (Unicode or its ASCII fallback), since the shape depends on the target
+        # stream's encoding.
+        ok = DoctorCheck("x", STATUS_OK).glyph
+        warn = DoctorCheck("x", STATUS_WARN).glyph
+        err = DoctorCheck("x", STATUS_ERR).glyph
+        assert ok.style == "success" and ok.plain in ("✓", "+")
+        assert warn.style == "warn" and warn.plain == "!"
+        assert err.style == "danger" and err.plain in ("✗", "x")
 
     def test_section_accumulates_checks(self):
         section = DoctorSection("Test")
@@ -511,3 +518,48 @@ def test_check_docker_ok_when_compose_present(monkeypatch):
     section = doctor._check_docker()
     statuses = {c.name: c.status for c in section.checks}
     assert statuses.get("docker compose") == doctor.STATUS_OK
+
+
+class TestCommandImportHygiene:
+    """Regression - command modules must not import the heavy scanner stack
+    at module import time.
+
+    ``acuario.ui.commands.__init__`` eagerly imports every command module so
+    the argument parser can register subcommands. If a command does a
+    module-level ``from acuario.scanner... import ...`` that transitively
+    pulls the native LLM/scanner stack, then ``acuario --help``, ``doctor``,
+    ``config`` and ``setup`` all crash on a partial install (e.g. before the
+    native extension is built). The scanner import must be lazy - deferred
+    into the command's ``handle()`` body.
+    """
+
+    def test_report_defers_scanner_resume_import(self):
+        """report.py must not bind ``resume_session`` at module scope."""
+        import acuario.ui.commands.report as report_mod
+
+        assert not hasattr(report_mod, "resume_session"), (
+            "report.py imports acuario.scanner.resume at module scope; move it "
+            "into handle() so partial installs can still run --help/doctor."
+        )
+
+    def test_commands_package_imports_without_scanner_stack(self):
+        """Importing the commands package must not pull the scanner/LLM stack.
+
+        Run in a clean subprocess: the shared pytest process already has the
+        heavy modules imported, so an in-process sys.modules check is meaningless
+        (and `assert pkg is not None` is a tautology). A fresh interpreter proves
+        the partial-install guarantee - `acuario --help`/doctor/config/setup work
+        before the native stack is built.
+        """
+        import subprocess
+        import sys
+
+        code = (
+            "import acuario.ui.commands;import sys;"
+            "bad=[m for m in sys.modules if m.startswith(('acuario.scanner','acuario.llm'))];"
+            "print('HEAVY:'+','.join(bad))"
+        )
+        out = subprocess.run(
+            [sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        assert out == "HEAVY:", f"commands package pulled heavy modules: {out}"

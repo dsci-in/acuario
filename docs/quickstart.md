@@ -143,14 +143,22 @@ sqlite3 ~/.acuario/scanner/historical_findings.db \
 
 ## Inspect past audits
 
+On a terminal `acuario history` is an interactive hub: sessions are numbered,
+you open one by typing its number (into `inspect`), `/text` filters, `n` / `p`
+page, and `..` inside `inspect` steps back to the list. For scripting, the same
+command piped or with `--ids-only` stays plain.
+
 ```bash
-acuario history                            # list every audit session
-acuario history --repo Project1            # filter by repo substring
+acuario history                            # interactive hub
+acuario history --repo Project1 --limit 10 # filter + cap, non-interactively
 acuario history --ids-only                 # session ids only, for piping
+acuario inspect <session-id>               # open one directly
 acuario report <session-id>                # re-render reports (no LLM)
-acuario report <session-id> --verify       # also re-run reviewer
-acuario sessions                           # alias of `history`
+acuario report <session-id> --verify       # also re-run the reviewer
 ```
+
+A session whose results directory has moved is still openable - `inspect` falls
+back to the findings database.
 
 ## Reading the cost summary
 
@@ -298,10 +306,11 @@ acuario inspect audit-3eff431d
   Plan 1  focus: shared session-token contract
   files: app3/cart.php, app3/session.php
 
-> quit
+> ..        # step back a level (or back to the `history` hub); `q` quits
 ```
 
-Full command list: `help` inside the REPL, or `acuario inspect --help`.
+A bare row number (e.g. `show 1`) works immediately, before any `list`. Full
+command list: `help` inside the REPL, or `acuario inspect --help`.
 
 ---
 

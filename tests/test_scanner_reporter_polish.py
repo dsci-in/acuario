@@ -518,3 +518,37 @@ def test_belt_drops_findings_under_output_dir(tmp_path: Path) -> None:
     assert "artifact" not in ids
     manifest = json.loads(Path(paths["manifest"]).read_text())
     assert manifest["finding_count"] == 1
+
+
+def test_variant_loop_excluded_from_markdown_and_sarif(tmp_path: Path) -> None:
+    # Regression (QA beyond-P3): variant_loop pattern-match noise is never
+    # persisted and the reviewer rejects it ~100%, so it must not pad report.md or
+    # findings.sarif (it stays in the raw findings.json for eval's by_source).
+    canonical = _make_finding(id="analyzer-keep", description="real finding kept here")
+    variant = _make_finding(
+        id="variant-drop",
+        discovered_by="variant_loop",
+        verified=False,
+        file="results/scanner/x/findings_pool.jsonl",
+        description="Variant: no vulnerable pattern detected noise",
+    )
+    paths = write_scanner_report(
+        output_dir=str(tmp_path),
+        session_id="test-session",
+        repo_url="/demo",
+        findings=[canonical, variant],
+        verified_findings=[canonical],
+        spent_per_tier={"A": 0.0, "B": 0.0, "C": 0.0},
+        formats=["markdown", "sarif", "json"],
+        cost_summary=_BASE_COST_SUMMARY_LOCAL,
+    )
+    md = Path(paths["markdown"]).read_text()
+    assert "real finding kept here" in md
+    assert "no vulnerable pattern detected noise" not in md
+
+    sarif = Path(paths["sarif"]).read_text()
+    assert "no vulnerable pattern detected noise" not in sarif
+
+    # findings.json stays raw (both rows present) so eval's by_source still works.
+    raw = Path(paths["json"]).read_text()
+    assert "variant-drop" in raw

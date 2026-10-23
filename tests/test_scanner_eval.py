@@ -39,7 +39,9 @@ class TestPerSourceVerifiedRate:
             {"id": "d", "discovered_by": "critic", "verified": True},
         ]
         r = analyze_session(_write_session(tmp_path, findings=findings))
-        assert r.total_findings == 4
+        # Headline counts exclude variant_loop (canonical set only), so the rate
+        # agrees with inspect/history; by_source still lists variant_loop separately.
+        assert r.total_findings == 3
         assert r.verified_findings == 2
         assert r.by_source["analyzer:unconstrained"] == {"total": 2, "verified": 1}
         assert r.by_source["variant_loop"] == {"total": 1, "verified": 0}

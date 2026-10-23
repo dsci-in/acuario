@@ -2,24 +2,17 @@
 
 from __future__ import annotations
 
+from .history import add_list_args
 from .history import handle as _history_handle
 
 
 def add_parser(subparsers):
+    # Reuse history's flag registration so the alias never drifts from it.
     parser = subparsers.add_parser(
         "sessions",
         help="Alias of `history` - list past audit sessions",
     )
-    parser.add_argument(
-        "--repo",
-        help="Filter by repo URL or local path (substring match)",
-    )
-    parser.add_argument(
-        "--ids-only",
-        action="store_true",
-        help="Print just session ids, one per line",
-    )
-    return parser
+    return add_list_args(parser)
 
 
 # Reuse history's handler verbatim.

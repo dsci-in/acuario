@@ -1,19 +1,18 @@
 # Acuario
 
-Inspired by Anthropic's Glasswing.
+Acuario finds security bugs in source code by running a team of language-model
+agents inside throwaway Docker sandboxes, rather than a single model reading
+files in order. A per-file analyzer proposes findings, an adversarial reviewer
+argues against each one, and verified bugs can be driven to a proof of concept
+that runs in the sandbox. A deterministic dependency scan flags known-vulnerable
+packages, and the reporter writes SARIF, Markdown, JSON, and a print-ready PDF.
 
-**Multi AI Agent Source Code Auditing Sandbox.** Built on
-`genai-pyo3`, a native Rust-backed LLM runtime that speaks every major
-provider (Anthropic, OpenAI, OpenRouter, Ollama, LM Studio, Together,
-Groq, DeepSeek, MiniMax, or any OpenAI-compatible endpoint; Gemini is
-reached via OpenRouter or a custom OpenAI-compatible endpoint).
-
-Acuario does one thing: **find vulnerabilities in source code**. A
-sandboxed analyzer agent runs per-file, an adversarial reviewer
-validates each finding, an optional exploit-dev agent generates and
-runs proofs-of-concept inside the sandbox, a deterministic SCA pass flags
-known-vulnerable dependencies, and the reporter writes
-SARIF + Markdown + JSON + a native PDF.
+Acuario is provider-agnostic: the model behind the agents is yours to choose,
+any major commercial API or a server you run, set up through the `acuario setup`
+wizard. The agentic approach was
+prompted by Anthropic's Glasswing; Acuario is an independent, openly available
+build of it. The [README](https://github.com/dsci-in/acuario#readme) has the
+full picture.
 
 ## Pages
 

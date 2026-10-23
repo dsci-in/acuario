@@ -12,7 +12,7 @@ Developed and maintained within DSCI.
 
 | Contributor | GitHub | Email | Role | Contributions |
 |-------------|--------|-------|------|---------------|
-| Ajay Pandey | [@4p0ca1ypse](https://github.com/4p0ca1ypse) | ajay.pandey@dsci.in | Security Research & Innovation Professional | Built Acuario - the multi-agent analysis pipeline, exploit-development engine, and sandbox runtime |
+| Ajay Pandey | [@4p0ca1ypse](https://github.com/4p0ca1ypse) | ajay.pandey@dsci.in | Security Research & Innovation | Built Acuario - the multi-agent analysis pipeline, exploit-development engine, and sandbox runtime |
 
 ## Community contributors
 

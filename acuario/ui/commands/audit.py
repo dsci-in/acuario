@@ -4,6 +4,11 @@ import logging
 import os
 import resource
 import sys
+from typing import NoReturn
+
+from rich.text import Text
+
+from acuario.ui import theme
 
 
 def _raise_fd_limit() -> None:
@@ -33,19 +38,39 @@ def _format_budget(budget: float) -> str:
     return f"${budget:.2f}"
 
 
+_AUDIT_EPILOG = """\
+Examples:
+  acuario audit .                              audit the current directory
+  acuario audit ./repo --depth deep            a deeper, multi-pass audit
+  acuario audit . --exploit                    run the live exploit stage
+  acuario audit . --budget 5                   cap paid spend at $5
+  acuario audit --resume <session-id>          re-review and re-report a past run
+"""
+
+
 def add_parser(subparsers):
     parser = subparsers.add_parser(
         "audit",
         help="Source-code security audit",
+        epilog=_AUDIT_EPILOG,
     )
-    parser.add_argument(
+    # Grouped for a navigable `acuario audit --help` (argparse argument
+    # groups; rendered as titled sections by rich-argparse).
+    g_target = parser.add_argument_group("target & resume")
+    g_analysis = parser.add_argument_group("analysis depth & scope")
+    g_exploit = parser.add_argument_group("exploitation")
+    g_review = parser.add_argument_group("review & validation")
+    g_perf = parser.add_argument_group("performance & concurrency")
+    g_sandbox = parser.add_argument_group("sandbox & safety")
+    g_llm = parser.add_argument_group("provider & output")
+    g_target.add_argument(
         "repo",
         nargs="?",
         default=".",
         help="Git URL or local path to a repository (default: current directory). "
         "Optional when using --resume.",
     )
-    parser.add_argument(
+    g_target.add_argument(
         "--resume",
         metavar="SESSION_ID",
         default=None,
@@ -61,7 +86,7 @@ def add_parser(subparsers):
         "--force-review to re-review even findings that already "
         "have a verdict.",
     )
-    parser.add_argument(
+    g_target.add_argument(
         "--force-review",
         action="store_true",
         default=False,
@@ -72,17 +97,17 @@ def add_parser(subparsers):
         "verdicts across runs - be aware that LLM non-determinism "
         "means borderline findings may flip-flop.",
     )
-    parser.add_argument("--branch", default="main", help="Git branch to clone (default: main)")
-    parser.add_argument(
+    g_target.add_argument("--branch", default="main", help="Git branch to clone (default: main)")
+    g_target.add_argument(
         "--local-path", metavar="PATH", help="Use this local path instead of cloning"
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--depth",
         choices=["quick", "standard", "deep"],
         default="standard",
         help="Hunt depth (default: standard)",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--agent-mode",
         choices=["auto", "constrained", "deep"],
         default="auto",
@@ -90,7 +115,7 @@ def add_parser(subparsers):
         help="Agent mode: 'auto' derives from --depth, 'constrained' forces legacy "
         "9-tool analyzer, 'deep' forces full-shell agent (default: auto)",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--prompt-mode",
         choices=["unconstrained", "specialist"],
         default="unconstrained",
@@ -98,21 +123,21 @@ def add_parser(subparsers):
         help="Prompt mode: 'unconstrained' uses a simple discovery prompt "
         "(default), 'specialist' uses legacy prescriptive checklists",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--campaign-hint",
         default=None,
         dest="campaign_hint",
         metavar="OBJECTIVE",
         help="Campaign objective hint, e.g. 'bugs reachable from unauthenticated remote input'",
     )
-    parser.add_argument(
+    g_exploit.add_argument(
         "--exploit",
         action="store_true",
         default=False,
         dest="exploit_mode",
         help="Instruct analyzers to write exploits for found vulnerabilities",
     )
-    parser.add_argument(
+    g_exploit.add_argument(
         "--findings",
         default=None,
         dest="exploit_findings",
@@ -123,21 +148,21 @@ def add_parser(subparsers):
             "gate (each below-gate one is force-exploited with a warning)."
         ),
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--starting-band",
         choices=["fast", "standard", "deep"],
         default=None,
         dest="starting_band",
         help="Override starting band for all runs (default: auto from --depth)",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--redundancy",
         type=int,
         default=None,
         metavar="N",
         help="Override redundancy count for high-ranked files (default: auto from priority)",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--shard-entry-points",
         action="store_true",
         default=False,
@@ -145,7 +170,7 @@ def add_parser(subparsers):
         help="Shard agents by function-level entry point for high-ranked files "
         "(auto-enabled at --depth deep)",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--min-shard-rank",
         type=int,
         default=4,
@@ -153,7 +178,7 @@ def add_parser(subparsers):
         metavar="N",
         help="Minimum file rank for entry-point sharding (default: 4)",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--subsystem-hunt",
         action="store_true",
         default=False,
@@ -161,7 +186,7 @@ def add_parser(subparsers):
         help="Enable cross-subsystem analyzing after per-file hunts. "
         "Auto-identifies subsystems from ranked files.",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--subsystem",
         action="append",
         default=[],
@@ -170,35 +195,35 @@ def add_parser(subparsers):
         help="Manually specify a subsystem directory to hunt (repeatable). "
         "Implies --subsystem-hunt. Example: --subsystem net/ipv4/",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--no-per-file-hunt",
         action="store_true",
         default=False,
         dest="no_per_file_hunt",
         help="Skip per-file analyzing; only run subsystem hunts.",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--seed-corpus",
         default=None,
         dest="seed_corpus",
         metavar="PATH",
         help="Path to a local seed corpus directory",
     )
-    parser.add_argument(
+    g_analysis.add_argument(
         "--seed-cves",
         action="store_true",
         default=False,
         dest="seed_cves",
         help="Auto-extract CVE history from git log as seed context",
     )
-    parser.add_argument(
+    g_perf.add_argument(
         "--budget",
         type=float,
         default=0.0,
         metavar="USD",
         help="Max dollars to spend (default: unlimited; 0 = unlimited)",
     )
-    parser.add_argument(
+    g_perf.add_argument(
         "--max-parallel",
         type=int,
         default=1,
@@ -208,46 +233,46 @@ def add_parser(subparsers):
         "when running against a backend with continuous batching "
         "(vLLM, Anthropic, OpenRouter, …) - e.g. --max-parallel 8.",
     )
-    parser.add_argument(
+    g_perf.add_argument(
         "--max-llm-concurrency",
         type=int,
         default=0,
-        help="M6: override the per-LLM-client request cap (in-flight "
+        help="Override the per-LLM-client request cap (in-flight "
         "requests to the model endpoint). 0 = use the built-in defaults "
         "(8 general, 4 prioritizer, 15 for openai_resp). A multi-GPU "
         "self-hosted vLLM box can usually sustain 24-32; raise this to "
         "convert that headroom into throughput. Clamped to 64.",
     )
-    parser.add_argument(
+    g_perf.add_argument(
         "--warm-container-pool",
         action="store_true",
-        help="N4: reuse a pool of pre-warmed sandbox containers across files "
+        help="Reuse a pool of pre-warmed sandbox containers across files "
         "instead of cold-spawning one per file (saves the per-file docker-run "
         "start). Each container is reset to a pristine git state between files; "
         "any container that can't be verified clean is dropped and replaced, so "
         "it never leaks state. Off by default - the per-file-spawn path is the "
         "guaranteed-fresh baseline.",
     )
-    parser.add_argument(
+    g_perf.add_argument(
         "--tier-split",
         default="70/25/5",
         help="Budget split A/B/C as percentages "
         "(default: 70/25/5; e.g. 60/30/10 for more propagation audits)",
     )
-    parser.add_argument(
+    g_perf.add_argument(
         "--skip-tier-c",
         action="store_true",
         help="Disable Tier C propagation audits (faster, misses root-cause-in-boring-files bugs)",
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-verify", action="store_true", help="Skip the independent-context reviewer pass"
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-adversarial",
         action="store_true",
         help="Disable adversarial reviewer (use the simpler v0.1 prompt)",
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--adversarial-threshold",
         default="static_corroboration",
         choices=[
@@ -261,31 +286,31 @@ def add_parser(subparsers):
         'budget on. "always" disables the gate; default is '
         "static_corroboration.",
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--validator-mode",
         choices=["v1", "v2"],
         default="v2",
         dest="validator_mode",
         help="Validation mode: v1 (legacy reviewer) or v2 (4-axis validator, default).",
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--recalibrate-severity",
         action="store_true",
-        help="O6: deterministically cap a verified finding's severity from the "
+        help="Deterministically cap a verified finding's severity from the "
         "4-axis confidences (e.g. TRIGGERABLE passed only at low confidence → "
         "cap at high). Rule-based, no extra LLM call. Off by default; the "
         "analyzer's claimed severity is preserved otherwise.",
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--skeptic-shadow-mode",
         action="store_true",
-        help="O8: run the skeptic in shadow mode - it logs its verdicts but "
+        help="Run the skeptic in shadow mode - it logs its verdicts but "
         "does NOT gate (every finding passes through to the validator). Lets "
         "you measure the skeptic's false-negative rate against the validator "
         "as ground truth. Writes calibration.jsonl. Off by default.",
     )
-    parser.add_argument("--no-exploit", action="store_true", help="Skip the exploit-triage pass")
-    parser.add_argument(
+    g_exploit.add_argument("--no-exploit", action="store_true", help="Skip the exploit-triage pass")
+    g_exploit.add_argument(
         "--exploit-budget",
         choices=["standard", "deep", "campaign"],
         default=None,
@@ -293,23 +318,23 @@ def add_parser(subparsers):
         help="Exploit development budget band (default: auto from --depth). "
         "standard=$25/1hr, deep=$200/4hr, campaign=$2000/12hr.",
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--variant-loop",
         action="store_true",
         help="Enable the variant analyzer loop (v0.3 compounding sibling-bug "
-        "search). Off by default (O9): historically 0 verified findings and the "
+        "search). Off by default: historically 0 verified findings and the "
         "source of the ~8h single-call stall.",
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-sca",
         action="store_true",
-        help="Skip the SCA vulnerable-dependency scan (C1: package.json + "
+        help="Skip the SCA vulnerable-dependency scan (package.json + "
         "lockfiles matched against a bundled offline advisory set). On by default.",
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-mechanism-memory", action="store_true", help="Skip cross-run mechanism memory (v0.3)"
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--mechanism-recall-k",
         type=int,
         default=3,
@@ -320,7 +345,7 @@ def add_parser(subparsers):
             "without disabling mechanism *recording*. Default: 3."
         ),
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-cross-file-context",
         action="store_true",
         help=(
@@ -329,7 +354,7 @@ def add_parser(subparsers):
             "findings for its file before specialist instructions."
         ),
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-skeptic-gate",
         action="store_true",
         help=(
@@ -338,11 +363,11 @@ def add_parser(subparsers):
             "pool. Refuted findings are logged to skeptic_refuted.jsonl."
         ),
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-debate",
         action="store_true",
         help=(
-            "Disable the analyzer↔skeptic debate round (O2). When enabled "
+            "Disable the analyzer↔skeptic debate round. When enabled "
             "(default), every finding the skeptic REFUTES gets one analyst "
             "rebuttal; if the skeptic is convinced, the finding is reinstated "
             "(advisory - the validator still judges it). The exchange is "
@@ -350,7 +375,7 @@ def add_parser(subparsers):
             "LLM cost; disable to keep the skeptic's refutations final."
         ),
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-critic",
         action="store_true",
         help=(
@@ -359,7 +384,7 @@ def add_parser(subparsers):
             "'what did you miss?' Leads are tagged discovered_by=critic."
         ),
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-orchestrator",
         action="store_true",
         help=(
@@ -368,51 +393,51 @@ def add_parser(subparsers):
             "investigation plans for shared-state and boundary violations."
         ),
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-stability-check",
         action="store_true",
         help="Skip the PoC stability verification (Stage 2.5)",
     )
-    parser.add_argument(
+    g_review.add_argument(
         "--no-findings-pool",
         action="store_true",
         help="Disable the shared findings pool (dedup + cross-agent queries)",
     )
-    parser.add_argument(
+    g_sandbox.add_argument(
         "--gvisor",
         action="store_true",
         help="Use the gVisor (runsc) runtime for stronger container "
         "isolation. Falls back to the default Docker runtime with a warning "
         "if runsc isn't installed on the host.",
     )
-    parser.add_argument(
+    g_sandbox.add_argument(
         "--strict-sandbox",
         action="store_true",
-        help="N5: add networking syscalls (socket/connect/bind/…) to the "
+        help="Add networking syscalls (socket/connect/bind/…) to the "
         "analyzer sandbox's seccomp denylist for defense-in-depth. Off by "
         "default - a deep analyzer may legitimately run a target server on "
         "loopback to confirm a bug. The sandbox is network-isolated either "
         "way (network_mode=none, cap_drop=ALL).",
     )
-    parser.add_argument(
+    g_sandbox.add_argument(
         "--encrypt-artifacts",
         action="store_true",
         help="Enable encrypted artifact storage",
     )
-    parser.add_argument(
+    g_sandbox.add_argument(
         "--no-behavior-monitor",
         action="store_true",
         help="Disable behavioral monitoring (regex post-hoc + ptrace real-time)",
     )
-    parser.add_argument(
+    g_sandbox.add_argument(
         "--no-sandbox-snapshots",
         action="store_true",
         help=(
-            "Disable docker-commit checkpoint/rollback around exploit attempts "
-            "(C1).  Default: snapshots are enabled when the daemon supports commit."
+            "Disable docker-commit checkpoint/rollback around exploit attempts. "
+            "Default: snapshots are enabled when the daemon supports commit."
         ),
     )
-    parser.add_argument(
+    g_exploit.add_argument(
         "--no-exploit-compose",
         action="store_true",
         help=(
@@ -423,19 +448,19 @@ def add_parser(subparsers):
             "loopback launch + fail-fast static-PoC path."
         ),
     )
-    parser.add_argument(
+    g_sandbox.add_argument(
         "--no-ptrace-monitor",
         action="store_true",
         help=(
-            "Disable the ptrace/strace real-time syscall monitor (C2).  When "
+            "Disable the ptrace/strace real-time syscall monitor.  When "
             "set, only the regex behavior monitor runs.  Default: ptrace tries "
             "to attach and falls back to regex when strace is unavailable."
         ),
     )
-    parser.add_argument(
+    g_llm.add_argument(
         "--model", default=None, help="Override all role models with one model name"
     )
-    parser.add_argument(
+    g_llm.add_argument(
         "--base-url",
         default=None,
         metavar="URL",
@@ -444,7 +469,7 @@ def add_parser(subparsers):
         "vLLM, Together, Groq, etc. Overrides ANTHROPIC_API_KEY for this run. "
         "Also settable via the ACUARIO_BASE_URL env var.",
     )
-    parser.add_argument(
+    g_llm.add_argument(
         "--api-key",
         default=None,
         metavar="KEY",
@@ -452,23 +477,44 @@ def add_parser(subparsers):
         "ACUARIO_API_KEY env var. Use any placeholder for fully-local "
         "endpoints like Ollama / LM Studio that ignore it.",
     )
-    parser.add_argument(
+    g_llm.add_argument(
         "--output-dir",
         default=None,
         help="Output directory (default: ./results/scanner or ~/.acuario/results/scanner)",
     )
-    parser.add_argument(
+    g_llm.add_argument(
         "--format",
         nargs="+",
         choices=["sarif", "markdown", "json", "pdf", "all"],
         default=["all"],
         help="Output formats to write (default: all, which includes a native PDF)",
     )
+    g_llm.add_argument(
+        "--no-dashboard",
+        action="store_true",
+        default=False,
+        dest="no_dashboard",
+        help="Disable the live progress dashboard (stage pipeline, findings tally, "
+        "spend meter) and stream the plain log instead. Auto-disabled when output "
+        "is not a TTY.",
+    )
     return parser
 
 
 def handle(cli, args):
     """Run the scanner pipeline."""
+
+    def _fail(msg: str) -> NoReturn:
+        """Render a pre-run validation error through the theme and exit 1.
+
+        One place for the scattered ``theme.error(...)`` + ``sys.exit(1)``
+        validation guards (tier-split, TierBudget, --no-per-file-hunt) so they
+        all render and exit identically.  ``theme.error`` auto-escapes ``msg``,
+        so a user-supplied value with a ``[`` renders verbatim.
+        """
+        cli.console.print(theme.error(msg))
+        sys.exit(1)
+
     # Raise the OS file-descriptor cap before anything else fires up - the
     # Docker sandbox + the genai-pyo3 reqwest client both consume FDs at a
     # rate that exhausts the 1024 default after a few dozen findings.
@@ -513,7 +559,9 @@ def handle(cli, args):
         from ...scanner.resume import resume_session
 
         session_id = args.resume_session_id
-        cli.console.print(f"[bold cyan]Resuming audit session {session_id}[/bold cyan]")
+        # First-class landing header for the resume surface (section_rule wraps
+        # the session id in an escaped Text, so a bracket can't break the rule).
+        cli.console.print(theme.section_rule(f"resume · {session_id}"))
         try:
             _exploit_findings_raw = getattr(args, "exploit_findings", None)
             _finding_ids = (
@@ -532,19 +580,25 @@ def handle(cli, args):
                 finding_ids=_finding_ids,
             )
         except FileNotFoundError as exc:
-            cli.console.print(f"[red]{exc}[/red]")
+            cli.console.print(theme.error(str(exc)))
             return
         except ValueError as exc:
-            cli.console.print(f"[red]{exc}[/red]")
+            cli.console.print(theme.error(str(exc)))
             cli.console.print(
-                "[dim]Tip: list available sessions with "
-                "`acuario history` or check "
-                "`~/.acuario/scanner/historical_findings.db`.[/dim]"
+                theme.muted(
+                    "Tip: list available sessions with `acuario history` "
+                    "or check `~/.acuario/scanner/historical_findings.db`."
+                )
             )
             return
-        cli.console.print("\n[bold green]Resume complete[/bold green]")
+        cli.console.print()
+        cli.console.print(theme.success("Resume complete"))
         for fmt, path in paths.items():
-            cli.console.print(f"  [bold]{fmt:10s}[/bold]  {path}")
+            row = Text("  ")
+            row.append(f"{fmt:<10}", style="ident")
+            row.append("  ")
+            row.append(str(path), style="path")
+            cli.console.print(row)
         return
 
     # Resolve the LLM endpoint once at the top of the command.
@@ -555,7 +609,7 @@ def handle(cli, args):
         cli_api_key=getattr(args, "api_key", None),
         config_provider=cli.config.get_provider_section() or None,
     )
-    cli.console.print(f"[dim]LLM endpoint: {endpoint.describe()}[/dim]")
+    cli.console.print(theme.muted(f"LLM endpoint: {endpoint.describe()}"))
     provider_manager = ProviderManager.for_endpoint(endpoint)
 
     # Tell the CostTracker which mode to operate in. Self-hosted endpoints
@@ -581,10 +635,7 @@ def handle(cli, args):
     try:
         a, b, c = (int(x) / 100.0 for x in args.tier_split.split("/"))
     except ValueError:
-        cli.console.print(
-            f"[red]Error: --tier-split must be three integers like '70/25/5', got '{args.tier_split}'[/red]"
-        )
-        sys.exit(1)
+        _fail(f"--tier-split must be three integers like '70/25/5', got {args.tier_split!r}")
 
     if args.skip_tier_c:
         # Redistribute Tier C allocation into A
@@ -598,18 +649,14 @@ def handle(cli, args):
             tier_c_fraction=c,
         )
     except ValueError as e:
-        cli.console.print(f"[red]Error: {e}[/red]")
-        sys.exit(1)
+        _fail(str(e))
 
     formats = args.format
     if "all" in formats:
         formats = ["sarif", "markdown", "json", "pdf"]
 
     if args.no_per_file_hunt and not args.subsystem_hunt and not args.subsystem_paths:
-        cli.console.print(
-            "[red]Error: --no-per-file-hunt requires --subsystem-hunt or --subsystem[/red]"
-        )
-        sys.exit(1)
+        _fail("--no-per-file-hunt requires --subsystem-hunt or --subsystem")
 
     # Canonicalise the repo identifier so local-path scans get a stable,
     # unique key in the historical-findings DB. Relative paths like "."
@@ -714,13 +761,42 @@ def handle(cli, args):
     _file_handler.setLevel(logging.DEBUG)
     logging.getLogger().addHandler(_file_handler)
 
+    # Live progress dashboard: default-on for an interactive, coloured TTY;
+    # disabled by --no-dashboard, NO_COLOR, or a non-TTY (piped / CI), which keep
+    # the plain streaming log. The dashboard only READS run state, so either path
+    # runs the identical scan.
+    _use_dashboard = (
+        _is_tty and not getattr(args, "no_dashboard", False) and not os.environ.get("NO_COLOR")
+    )
+
     try:
-        result = runner.run()
+        if _use_dashboard:
+            from ...ui.dashboard import DashboardState, live_dashboard
+
+            _dash_state = DashboardState(
+                session_id=runner.session_id,
+                depth=args.depth,
+                get_findings=lambda: runner.live_findings,
+                get_spend=lambda: _tracker.total_cost_usd,
+                budget=(float(args.budget) if args.budget else None),
+                is_self_hosted=_tracker.is_self_hosted,
+            )
+            _dash_fmt = AuditNarrator.get_log_formatter(
+                colorize=True, banner_on_stage_change=False, indent_auxiliary_stages=True
+            )
+            with live_dashboard(cli.console, _dash_state, formatter=_dash_fmt):
+                result = runner.run()
+                # Scan returned cleanly: light every stage in the final frozen
+                # frame instead of freezing on the last stage that logged.
+                _dash_state.mark_complete()
+        else:
+            result = runner.run()
     except KeyboardInterrupt:
-        cli.console.print("\n[yellow]Audit cancelled by user[/yellow]")
+        cli.console.print()
+        cli.console.print(theme.warn("Audit cancelled by user"))
         sys.exit(130)
     except (ValueError, RuntimeError) as exc:
-        cli.console.print(f"[red]Error: {exc}[/red]")
+        cli.console.print(theme.error(str(exc)))
         sys.exit(1)
     finally:
         # Flush and detach the per-session FileHandler so it doesn't leak
@@ -741,10 +817,19 @@ def handle(cli, args):
         snapshot_cycles=getattr(result, "snapshot_cycles", 0),
         ptrace_events=getattr(result, "ptrace_events", 0),
     )
-    _narrator.print_summary(
-        result=result,
-        log_file_path=str(_log_file_path),
-        lab_stats=_lab_stats,
-    )
+    try:
+        _narrator.print_summary(
+            result=result,
+            log_file_path=str(_log_file_path),
+            lab_stats=_lab_stats,
+        )
+    except Exception as exc:
+        # A completed, expensive audit must never die on summary rendering.
+        logging.getLogger(__name__).warning("End-of-run summary failed to render: %s", exc)
+        done = theme.success("Audit complete")
+        done.append(f". Session {result.session_id}. Explore it with: ", style="muted")
+        done.append(f"acuario inspect {result.session_id}", style="accent")
+        _narrator.console.print()
+        _narrator.console.print(done)
 
     sys.exit(result.exit_code)

@@ -15,6 +15,8 @@ workflow and explains the non-obvious flags.
 ## Global flags
 
 - `-h`, `--help` - top-level or per-subcommand help
+- `acuario help [command]` - the same help, git-style (`acuario help` for the
+  overview, `acuario help audit` for one command)
 - `-V`, `--version` - prints `acuario 2.0.0`
 - `--license` - prints the AGPL legal notice (copyright, no-warranty, redistribution terms) and exits
 
@@ -26,6 +28,11 @@ workflow and explains the non-obvious flags.
 - `ACUARIO_API_KEY` - credential for the `ACUARIO_BASE_URL` endpoint
 - `ACUARIO_MODEL` - model name for the endpoint
 - `ACUARIO_HOME` - override the runtime data dir (default `~/.acuario/`)
+- `NO_COLOR` - disable all colour (output stays plain; severity still reads
+  via its shape + label). Colour is also dropped automatically when stdout
+  is not a TTY (piped / CI), so logs and `--plain` / `--ids-only` output are
+  clean to parse.
+- `FORCE_COLOR` - keep colour even when the output is redirected
 
 ---
 
@@ -74,7 +81,18 @@ acuario audit <repo_url_or_path>
   [--api-key KEY]                    # credential for --base-url
   [--output-dir DIR]                 # default: ./results/scanner (git checkout) or ~/.acuario/results/scanner (installed package)
   [--format sarif markdown json pdf all]   # default: all (includes a native PDF)
+  [--no-dashboard]                   # disable the live progress dashboard
 ```
+
+### Live progress dashboard
+
+On an interactive terminal the run shows a live dashboard pinned below the
+scrolling log: the current pipeline stage, a running findings tally (with
+CVD-safe severity badges) and verified count, elapsed time, and a spend /
+budget meter. It is **on by default**; `--no-dashboard`, `NO_COLOR`, or a
+non-TTY (piped / CI) fall back to the plain streaming log - so scripted and
+CI runs are unchanged. The dashboard only reads run state; the scan itself
+is identical either way.
 
 ### Depth comparison
 
@@ -188,16 +206,22 @@ acuario config --set-provider \
 
 ---
 
-## `history` - list past audit sessions
+## `history` - browse past audit sessions
 
 ```bash
-acuario history                      # all sessions, newest first
+acuario history                      # interactive hub, newest first
 acuario history --repo Project1      # filter by repo path / URL
+acuario history --limit 20           # cap the list to the 20 most recent
 acuario history --ids-only           # one session id per line, for piping
 ```
 
-Reads from `~/.acuario/scanner/historical_findings.db` - the same
-sqlite store the audit pipeline writes to.
+Reads from `~/.acuario/scanner/historical_findings.db` - the same sqlite store
+the audit pipeline writes to.
+
+On a terminal, `history` is an **interactive hub**: sessions are numbered and
+paged 15 at a time. Type a number (a leading `#` is fine) to open that audit in
+`inspect`; `/text` filters by repo or id, `n` / `p` page through a long list,
+and `q` quits. Piped or `--ids-only` output stays plain for scripting.
 
 ---
 
@@ -219,7 +243,96 @@ state and emits the report files in seconds.
 
 ```bash
 acuario sessions                     # same output as `acuario history`
-acuario sessions --repo Project1
+acuario sessions --repo Project1 --limit 20
 ```
 
-A thin alias of `history`.
+A thin alias of `history` - same flags (`--repo`, `--ids-only`, `--limit`),
+same interactive hub, same handler.
+
+---
+
+## `inspect` - interactive session explorer (REPL)
+
+```bash
+acuario inspect <session-id>
+acuario inspect <session-id> --results-dir /path/to/results/scanner
+```
+
+Opens a prompt for chatting with a finished audit. It loads the saved
+findings plus the lab logs (skeptic, critic, orchestrator, debate) and
+lets you triage, drill in, and ask the LLM to explain or patch a finding.
+Output is plain when piped or under `NO_COLOR`, so the REPL also works in
+scripts (`printf 'triage\nquit\n' | acuario inspect <id>`).
+
+Commands at the `>` prompt:
+
+**Browse**
+
+- `triage [N|all]` - findings ranked by priority (severity, then evidence
+  strength, then confidence; verified and exploited findings float up).
+  Defaults to the top 15. Alias: `top`.
+- `list [--severity critical|high|medium|low] [--sort severity|rank]` -
+  list findings. `--plain` prints grep-friendly rows (no table),
+  `--ids-only` prints one finding id per line for piping.
+- `show <finding-id>` - full detail for a finding (fields, code snippet,
+  evidence, and the validator's pro/counter/tie-breaker + 4-axis verdict).
+  Also sets the current selection.
+- `<row#>` or `<id-prefix>` - a bare row number from the last listing, or
+  an id prefix, is a shortcut for `show`.
+- `next` / `prev` (`n` / `p`) - step the selection through the last list.
+
+**Explain** (these call the LLM)
+
+- `why <finding-id>` - explanation of the reasoning chain, rendered as
+  Markdown.
+- `fix <finding-id>` - a suggested unified-diff patch, rendered as a diff.
+  Read-only: it never writes to your source tree.
+- `related <finding-id>` - sibling findings from the same cluster (or, as
+  a fallback, the same file + CWE).
+
+**Lab**
+
+- `skeptic <finding-id>` - the skeptic gate verdict (accepted / refuted)
+  and its reasoning.
+- `debate <finding-id>` - replay the analyzer↔skeptic debate for a
+  refuted finding.
+- `critic` - reflective-critic low-confidence leads for the session.
+- `orchestrator` - cross-file hunt plans the orchestrator emitted and the
+  findings they surfaced.
+- `exploit <finding-id>` - the exploit transcript and PoC string, if the
+  audit ran the exploit-dev stage.
+
+**Navigate**
+
+- `back` (`..` / `0`) - up one level: clears the selected finding, or returns
+  to the `acuario history` hub when you entered from there.
+- `help` prints the command list; `quit` (or `exit`, `q`) leaves the REPL.
+
+Row numbers work the moment a session opens - `show 1` resolves against all
+findings before you have run `list` or `triage`. If a session's results
+directory has been moved or cleaned up, `inspect` loads its findings from the
+`historical_findings.db` instead (lab logs are then unavailable, but the
+findings are intact), so anything listed in `history` stays openable.
+
+---
+
+## `eval` - quality scoreboard for a session
+
+```bash
+acuario eval <session-id>                        # proxy-metric scoreboard
+acuario eval <session-id> --compare <session-id> # delta between two runs
+acuario eval <session-id> --annotations ann.json # true precision from labels
+acuario eval <session-id> --format json          # machine-readable
+acuario eval <session-id> --results-dir PATH
+```
+
+A developer-facing scoreboard over a finished audit. Without labels it
+reports proxy metrics (counts by severity/evidence, verified vs refuted
+rates, exploit outcomes); `--compare` shows the delta against a second
+session. Supply `--annotations` - a JSON map of `finding_id -> {"label":
+"TP"|"FP"}` - to compute true precision instead of proxies.
+
+On a terminal the scoreboard renders with the theme (a framed by-source table
+with colour-banded rates, plus kv-tables); piped or redirected output
+(`acuario eval <id> > report.md`) stays raw Markdown. `--format json` writes
+machine-readable JSON to stdout.

@@ -191,7 +191,7 @@ class HistoricalFindingsDB:
             if not fid:
                 continue
             try:
-                self._conn.execute(
+                cur = self._conn.execute(
                     """INSERT OR IGNORE INTO findings
                     (id, file, line_number, finding_type, primitive_type,
                      cluster_id, cwe, severity, description, code_snippet,
@@ -228,7 +228,7 @@ class HistoricalFindingsDB:
                         f.get("exploit_transcript_path"),
                     ),
                 )
-                count += 1
+                count += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
             except sqlite3.Error:
                 logger.debug("Failed to insert finding %s", fid, exc_info=True)
         self._conn.commit()

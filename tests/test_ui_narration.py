@@ -242,18 +242,24 @@ class TestPrintHeader:
         assert "audit-abc123" in text
 
     def test_header_shows_pipeline_stages(self):
-        narrator, console = self._make_narrator()
-        narrator.print_header(
-            session_id="audit-xyz",
-            target="/tmp/repo",
-            depth="deep",
+        # Render on a real themed console (not the un-rendered Panel markup), so
+        # this actually proves the [skeptic]/[orchestrate] labels survive to the
+        # terminal instead of being eaten as Rich markup tags.
+        from io import StringIO
+
+        from acuario.ui.theme import build_console
+
+        buf = StringIO()
+        narrator = AuditNarrator(
+            build_console(file=buf, force_terminal=True, no_color=True, width=100)
         )
-        text = self._collect_text(console)
+        narrator.print_header(session_id="audit-xyz", target="/tmp/repo", depth="deep")
+        text = buf.getvalue()
         assert "preprocess" in text
-        # Phase I changed the wording from "skeptic gate" to "[skeptic]"
-        # (since the brackets now visually mark every stage uniformly).
-        assert "skeptic" in text
-        assert "orchestrate" in text
+        # Brackets must render literally - before the escape fix they were parsed
+        # away and these labels vanished from the rendered header.
+        assert "[skeptic]" in text
+        assert "[orchestrate]" in text
 
     def test_header_shows_lab_flags(self):
         narrator, console = self._make_narrator()
@@ -333,6 +339,20 @@ class TestPrintSummary:
             setattr(result, k, v)
         return result
 
+    def _render(self, result, **kw) -> str:
+        """Render the summary to a real themed console and return plain text, so
+        assertions see content that now lives inside kv_tables / section rules
+        (a MagicMock's str() would hide text wrapped in Rich renderables)."""
+        import io
+        import re
+
+        from acuario.ui import theme
+
+        buf = io.StringIO()
+        console = theme.build_console(file=buf, force_terminal=True, no_color=True, width=100)
+        AuditNarrator(console).print_summary(result=result, **kw)
+        return re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
+
     def test_summary_shows_session_id(self):
         console = MagicMock()
         narrator = AuditNarrator(console)
@@ -342,18 +362,11 @@ class TestPrintSummary:
         assert any("audit-summary-test" in c for c in calls)
 
     def test_summary_shows_investigation_block(self):
-        console = MagicMock()
-        narrator = AuditNarrator(console)
-        result = self._make_result()
-        narrator.print_summary(result=result)
-        calls = [str(c) for c in console.print.call_args_list]
-        assert any("INVESTIGATION" in c for c in calls)
-        assert any("files ranked" in c for c in calls)
+        out = self._render(self._make_result())
+        assert "INVESTIGATION" in out
+        assert "files ranked" in out
 
     def test_summary_shows_lab_block_when_stats_present(self):
-        console = MagicMock()
-        narrator = AuditNarrator(console)
-        result = self._make_result()
         lab = LabStats(
             skeptic_accepted=73,
             skeptic_refuted=24,
@@ -362,27 +375,18 @@ class TestPrintSummary:
             orchestrator_plans=4,
             orchestrator_findings=2,
         )
-        narrator.print_summary(result=result, lab_stats=lab)
-        calls = [str(c) for c in console.print.call_args_list]
-        assert any("LAB" in c for c in calls)
-        assert any("73" in c for c in calls)  # skeptic accepted
-        assert any("24" in c for c in calls)  # skeptic refuted
+        out = self._render(self._make_result(), lab_stats=lab)
+        assert "LAB" in out
+        assert "73" in out  # skeptic accepted
+        assert "24" in out  # skeptic refuted
 
     def test_summary_hides_lab_block_when_no_stats(self):
-        console = MagicMock()
-        narrator = AuditNarrator(console)
-        result = self._make_result()
-        narrator.print_summary(result=result, lab_stats=LabStats())
-        calls = [str(c) for c in console.print.call_args_list]
-        assert not any("LAB" in c for c in calls)
+        out = self._render(self._make_result(), lab_stats=LabStats())
+        assert "LAB" not in out
 
     def test_summary_shows_self_hosted_zero_cost(self):
-        console = MagicMock()
-        narrator = AuditNarrator(console)
-        result = self._make_result(is_self_hosted_endpoint=True)
-        narrator.print_summary(result=result)
-        calls = [str(c) for c in console.print.call_args_list]
-        assert any("$0.00" in c for c in calls)
+        out = self._render(self._make_result(is_self_hosted_endpoint=True))
+        assert "$0.00" in out
 
     def test_summary_shows_next_inspect_command(self):
         console = MagicMock()
@@ -599,3 +603,102 @@ class TestPanelHeader:
         panel = panel_calls[0].args[0]
         # Panel title carries the session id
         assert "audit-X" in str(panel.title)
+
+
+class TestSummaryMarkupSafety:
+    """Regression - print_summary must not crash on finding text with brackets.
+
+    Finding descriptions and file paths are attacker/LLM-influenced free text.
+    Before the fix they were interpolated straight into a Rich markup string,
+    so a description like ``Reads [/etc/passwd]`` raised ``MarkupError``.  The
+    TOP FINDINGS block now renders severity via ``theme.severity_badge`` and
+    appends the file/description as plain ``Text`` (never markup-parsed); these
+    tests pin that free text survives verbatim and unknown severities fold
+    safely.  They use ``build_console`` because the summary now renders theme
+    style names, which only resolve on the themed console (the production path).
+    """
+
+    @staticmethod
+    def _themed_narrator(buf):
+        # Themed, but no_color so output is clean plain text for assertions
+        # (styles still resolve, so no MissingStyle on rules/components).
+        from acuario.ui.theme import build_console
+
+        return AuditNarrator(
+            build_console(file=buf, force_terminal=True, no_color=True, width=100)
+        )
+
+    @staticmethod
+    def _result(findings):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            session_id="audit-test",
+            duration_seconds=12.0,
+            files_ranked=3,
+            files_hunted=3,
+            unique_finding_count=len(findings),
+            unique_verified_count=len(findings),
+            total_critical_count=1,
+            total_high_count=0,
+            critical_count=1,
+            high_count=0,
+            input_tokens=0,
+            output_tokens=0,
+            endpoint_label="",
+            is_self_hosted_endpoint=False,
+            cost_usd=0.0,
+            output_paths={},
+            findings=findings,
+        )
+
+    def test_bracketed_description_does_not_crash(self):
+        """Square brackets in description/file render as literal text, no raise."""
+        from io import StringIO
+
+        buf = StringIO()
+        narrator = self._themed_narrator(buf)
+        result = self._result(
+            [
+                {
+                    "severity_verified": "critical",
+                    "file": "svc/[config]/loader.py",
+                    "line_number": 42,
+                    "description": "Reads [/etc/passwd] via unescaped [bracket] path",
+                }
+            ]
+        )
+
+        # Would raise rich.errors.MarkupError before the fix.
+        narrator.print_summary(result=result, log_file_path="")
+
+        out = buf.getvalue()
+        assert "TOP FINDINGS" in out
+        # The literal bracketed text survives (not consumed as markup).
+        assert "/etc/passwd" in out
+        assert "[config]" in out
+        # CVD-safe badge: the UPPERCASE label is present alongside the colour.
+        assert "CRITICAL" in out
+
+    def test_unknown_severity_folds_to_info(self):
+        """A severity outside the ladder folds to INFO - no crash, no bad markup."""
+        from io import StringIO
+
+        buf = StringIO()
+        narrator = self._themed_narrator(buf)
+        result = self._result(
+            [
+                {
+                    "severity": "WEIRD",
+                    "file": "a.py",
+                    "line_number": 1,
+                    "description": "odd severity",
+                }
+            ]
+        )
+
+        narrator.print_summary(result=result, log_file_path="")
+        out = buf.getvalue()
+        # Unknown severity renders as the INFO badge (theme.normalize_severity).
+        assert "INFO" in out
+        assert "odd severity" in out

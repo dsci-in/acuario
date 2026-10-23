@@ -19,11 +19,11 @@ import time
 from typing import TYPE_CHECKING
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
-from rich.table import Table
+from rich.text import Text
 
 from acuario import __version__
+from acuario.ui import theme
 
 if TYPE_CHECKING:
     from acuario.providers import ProviderPreset
@@ -39,9 +39,9 @@ def add_parser(subparsers):
         aliases=["init"],
         help="Interactive wizard to configure your LLM provider",
         description=(
-            "Walk through provider selection, credential entry, optional "
-            "connection testing, and persistence to ~/.acuario/config.yaml. "
-            "Safe to re-run - existing config is shown and can be overwritten."
+            "Walk through provider selection, credential entry, optional connection\n"
+            "testing, and persistence to ~/.acuario/config.yaml. Safe to re-run -\n"
+            "existing config is shown and can be overwritten."
         ),
     )
     parser.add_argument(
@@ -86,25 +86,30 @@ def handle(cli, args) -> None:
 
     _print_welcome(console, cli)
 
+    console.print(theme.section_rule("Step 1 · provider"))
+
     # Direct mode - user knows exactly which provider they want
     if args.provider:
         preset = preset_by_key(args.provider)
         if preset is None:
-            console.print(
-                f"[red]Error: unknown provider '{args.provider}'. "
-                f"Known keys: {', '.join(p.key for p in KNOWN_PROVIDERS)}[/red]"
-            )
+            known = ", ".join(p.key for p in KNOWN_PROVIDERS)
+            # theme.error escapes its text, so a bracket in the user-typed
+            # provider name renders verbatim instead of crashing the markup parser.
+            console.print(theme.error(f"Unknown provider {args.provider!r}. Known keys: {known}"))
             return
     else:
         preset = _prompt_provider_choice(console, KNOWN_PROVIDERS)
         if preset is None:
-            console.print("[yellow]Setup cancelled.[/yellow]")
+            console.print(theme.warn("Setup cancelled."))
             return
 
-    console.print(f"\n[bold cyan]Configuring {preset.display_name}[/bold cyan]")
-    console.print(f"[dim]Docs: {preset.docs_url}[/dim]\n")
+    console.print()
+    console.print(theme.accent(f"Configuring {preset.display_name}"))
+    console.print(theme.muted(f"Docs: {preset.docs_url}"))
+    console.print()
 
     # Per-provider inputs
+    console.print(theme.section_rule("Step 2 · credentials"))
     base_url = _prompt_base_url(console, preset)
     if base_url == "":
         base_url = None  # Anthropic direct has no base_url
@@ -122,7 +127,7 @@ def handle(cli, args) -> None:
     )
 
     if model == "" and preset.key != "anthropic":
-        console.print("[red]Error: model cannot be empty for OpenAI-compat endpoints.[/red]")
+        console.print(theme.error("model cannot be empty for OpenAI-compat endpoints."))
         return
 
     # Confirm + write
@@ -130,15 +135,15 @@ def handle(cli, args) -> None:
     if not args.yes:
         existing = cli.config.get_provider_section()
         if existing:
+            console.print()
             console.print(
-                "\n[yellow]An existing provider config was found in "
-                f"{cli.config.DEFAULT_CONFIG_PATH}[/yellow]"
+                theme.warn(f"An existing provider config was found in {cli.config.DEFAULT_CONFIG_PATH}")
             )
-            if not Confirm.ask("Overwrite it?", default=True):
-                console.print("[yellow]Setup cancelled.[/yellow]")
+            if not Confirm.ask("Overwrite it?", default=True, console=console):
+                console.print(theme.warn("Setup cancelled."))
                 return
-        elif not Confirm.ask("\nWrite this to ~/.acuario/config.yaml?", default=True):
-            console.print("[yellow]Setup cancelled.[/yellow]")
+        elif not Confirm.ask(f"\nWrite this to {cli.config.DEFAULT_CONFIG_PATH}?", default=True, console=console):
+            console.print(theme.warn("Setup cancelled."))
             return
 
     # Persist
@@ -149,9 +154,24 @@ def handle(cli, args) -> None:
         _run_test_invoke(console, preset, base_url, api_key_literal, model)
 
     # Final status
-    console.print("\n[bold green]Setup complete.[/bold green]")
-    console.print("Run [bold]acuario config --show-provider[/bold] anytime to inspect.")
-    console.print("Run [bold]acuario doctor[/bold] to validate your full environment.")
+    console.print()
+    console.print(theme.success("Setup complete."))
+
+    # "Next steps" send-off: a Text body (styled appends, never markup), so the
+    # command names carry the accent tone while staying injection-safe, wrapped
+    # in an accent-framed panel that closes the wizard.
+    steps = Text()
+    steps.append("Run ")
+    steps.append("acuario config --show-provider", style="accent")
+    steps.append(" anytime to inspect your saved endpoint.\n")
+    steps.append("Run ")
+    steps.append("acuario doctor", style="accent")
+    steps.append(" to validate your full environment.\n")
+    steps.append("Run ")
+    steps.append("acuario audit .", style="accent")
+    steps.append(" to start your first scan.")
+    console.print()
+    console.print(theme.panel(steps, title="Next steps", kind="accent"))
 
 
 # --- UI helpers -----------------------------------------------------------
@@ -160,25 +180,25 @@ def handle(cli, args) -> None:
 def _print_welcome(console: Console, cli) -> None:
     from acuario.ui.cli import BANNER
 
-    console.print(BANNER, style="bold cyan")
+    console.print(theme.brand_banner(BANNER, console=console))
     existing = cli.config.get_provider_section()
-    lines = [
-        f"[bold]Acuario {__version__} - LLM provider setup[/bold]",
-        "",
-        "This wizard configures an LLM backend for Acuario's source-code",
-        "analysis pipelines. Your selection persists to",
-        f"  {cli.config.DEFAULT_CONFIG_PATH}",
-    ]
+    # Build the body as a Text (styles applied directly), so a bracket in the
+    # config path or a saved model/base_url renders verbatim.
+    body = Text()
+    body.append(f"Acuario {__version__} · LLM provider setup", style="title")
+    body.append("\n\nThis wizard configures an LLM backend for Acuario's source-code\n")
+    body.append("analysis pipelines. Your selection persists to\n  ")
+    body.append(str(cli.config.DEFAULT_CONFIG_PATH), style="path")
     if existing:
         base_url = existing.get("base_url") or "(Anthropic direct)"
         model = existing.get("model") or "(default)"
-        lines += [
-            "",
-            "[dim]Current config:[/dim]",
-            f"  model:    {model}",
-            f"  base_url: {base_url}",
-        ]
-    console.print(Panel("\n".join(lines), border_style="cyan"))
+        body.append("\n\n")
+        body.append("Current config", style="muted")
+        body.append("\n  model:    ")
+        body.append(str(model), style="accent")
+        body.append("\n  base_url: ")
+        body.append(str(base_url), style="path")
+    console.print(theme.panel(body, kind="accent"))
     console.print()
 
 
@@ -186,14 +206,18 @@ def _prompt_provider_choice(
     console: Console, presets: tuple[ProviderPreset, ...]
 ) -> ProviderPreset | None:
     """Menu-driven provider selection."""
-    table = Table(title="Choose a provider", title_style="bold", show_lines=False)
-    table.add_column("#", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Name", style="bold")
-    table.add_column("Description")
-
+    table = theme.framed_table(
+        ["#", "NAME", "DESCRIPTION"],
+        title="Choose a provider",
+        caption=f"{len(presets)} provider(s)",
+        kind="info",
+    )
+    table.columns[0].justify = "right"
+    table.columns[0].style = "faint"
+    table.columns[1].style = "ident"
     for i, preset in enumerate(presets, start=1):
-        table.add_row(str(i), preset.display_name, preset.description)
-    table.add_row("0", "[dim]Cancel[/dim]", "")
+        table.add_row(theme.field(str(i)), theme.field(preset.display_name), theme.field(preset.description))
+    table.add_row(theme.field("0"), theme.muted("Cancel"), theme.field(""))
 
     console.print(table)
     choice = IntPrompt.ask(
@@ -201,6 +225,7 @@ def _prompt_provider_choice(
         default=1,
         choices=[str(i) for i in range(0, len(presets) + 1)],
         show_choices=False,
+        console=console,
     )
     if choice == 0:
         return None
@@ -211,20 +236,20 @@ def _prompt_base_url(console: Console, preset: ProviderPreset) -> str:
     """Prompt for base_url with a provider-appropriate default."""
     if preset.auth_flow == "openai_codex":
         console.print(
-            "[dim]OpenAI OAuth uses the ChatGPT Codex backend "
-            "(no Platform API key or /v1 base URL).[/dim]"
+            theme.muted("OpenAI OAuth uses the ChatGPT Codex backend (no Platform API key or /v1 base URL).")
         )
         return preset.default_base_url or "https://chatgpt.com/backend-api"
 
     if preset.default_base_url is None:
         # Anthropic direct - no base_url to configure
-        console.print("[dim]Anthropic direct uses api.anthropic.com (no base URL to set).[/dim]")
+        console.print(theme.muted("Anthropic direct uses api.anthropic.com (no base URL to set)."))
         return ""
 
     default = preset.default_base_url
     return Prompt.ask(
         "Base URL",
         default=default,
+        console=console,
     ).strip()
 
 
@@ -259,30 +284,29 @@ def _prompt_api_key(
             try:
                 creds = ensure_fresh_openai_oauth_credentials()
                 console.print(
-                    f"[dim]Using stored OpenAI OAuth credentials for "
-                    f"account_id={creds.account_id}.[/dim]"
+                    theme.muted(f"Using stored OpenAI OAuth credentials for account_id={creds.account_id}.")
                 )
                 return ""
             except Exception as exc:
-                console.print(
-                    f"[yellow]Stored OpenAI OAuth credentials need renewal: {exc}[/yellow]"
-                )
+                console.print(theme.warn(f"Stored OpenAI OAuth credentials need renewal: {exc}"))
 
         console.print(
-            "[dim]Starting OpenAI browser OAuth. Credentials are stored under ~/.acuario/auth/.[/dim]"
+            theme.muted("Starting OpenAI browser OAuth. Credentials are stored under ~/.acuario/auth/.")
         )
         creds = login_openai_oauth(
             no_open=no_open,
             timeout_seconds=timeout_seconds,
             print_fn=console.print,
         )
-        console.print(f"[green]OpenAI OAuth login complete.[/green] account_id={creds.account_id}")
+        done = theme.success("OpenAI OAuth login complete.")
+        done.append(f" account_id={creds.account_id}", style="muted")
+        console.print(done)
         return ""
 
     if preset.is_local and preset.api_key_env_var is None:
         placeholder = "ollama" if "11434" in (preset.default_base_url or "") else "not-needed"
         console.print(
-            f"[dim]{preset.display_name} is keyless - storing '{placeholder}' as a placeholder.[/dim]"
+            theme.muted(f"{preset.display_name} is keyless, storing {placeholder!r} as a placeholder.")
         )
         return placeholder
 
@@ -290,24 +314,23 @@ def _prompt_api_key(
     env_value = os.environ.get(env_var) if env_var else None
 
     if env_var and env_value:
-        console.print(
-            f"[dim]Detected ${env_var} in your environment (length {len(env_value)}).[/dim]"
-        )
+        console.print(theme.muted(f"Detected ${env_var} in your environment (length {len(env_value)})."))
         use_env = Confirm.ask(
             f"Store as [bold]${{{env_var}}}[/bold] (keeps the secret out of the file)?",
             default=True,
+            console=console,
         )
         if use_env:
             return f"${{{env_var}}}"
 
     if env_var:
         console.print(
-            f"[dim]Get an API key at {preset.docs_url} (or set ${env_var} and re-run setup).[/dim]"
+            theme.muted(f"Get an API key at {preset.docs_url} (or set ${env_var} and re-run setup).")
         )
     else:
-        console.print(f"[dim]Get an API key at {preset.docs_url}.[/dim]")
+        console.print(theme.muted(f"Get an API key at {preset.docs_url}."))
 
-    api_key = Prompt.ask("API key", password=True, default="").strip()
+    api_key = Prompt.ask("API key", password=True, default="", console=console).strip()
     return api_key
 
 
@@ -385,16 +408,21 @@ def _select_from_live_models(console: Console, models: list[str], source_label: 
     Returns ``None`` if the user picked "type a custom name instead"
     so the caller can fall through to the free-text prompt.
     """
-    table = Table(
-        title=f"Models available at {source_label}",
-        title_style="bold",
-        show_lines=False,
+    # Source label is a free-text base_url, so it goes in a themed rule (escaped)
+    # rather than a markup-parsed table title.
+    console.print(theme.section_rule(f"models at {source_label}"))
+    table = theme.framed_table(
+        ["#", "MODEL NAME"],
+        title="Available models",
+        caption=f"{len(models)} model(s)",
+        kind="info",
     )
-    table.add_column("#", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Model name", style="bold")
+    table.columns[0].justify = "right"
+    table.columns[0].style = "faint"
+    table.columns[1].style = "ident"
     for i, name in enumerate(models, start=1):
-        table.add_row(str(i), name)
-    table.add_row("0", "[dim]Type a custom name instead[/dim]")
+        table.add_row(theme.field(str(i)), theme.field(name))
+    table.add_row(theme.field("0"), theme.muted("Type a custom name instead"))
     console.print(table)
 
     choice = IntPrompt.ask(
@@ -402,6 +430,7 @@ def _select_from_live_models(console: Console, models: list[str], source_label: 
         default=1,
         choices=[str(i) for i in range(0, len(models) + 1)],
         show_choices=False,
+        console=console,
     )
     if choice == 0:
         return None
@@ -429,7 +458,8 @@ def _prompt_model(
     """
     # --- Ollama: native /api/tags ---------------------------------------
     if preset.key == "ollama" and base_url:
-        console.print("\n[dim]Fetching available models from Ollama endpoint…[/dim]")
+        console.print()
+        console.print(theme.muted("Fetching available models from Ollama endpoint…"))
         live_models = _fetch_ollama_models(base_url)
         if live_models:
             picked = _select_from_live_models(console, live_models, base_url)
@@ -437,15 +467,13 @@ def _prompt_model(
                 return picked
         else:
             console.print(
-                "[yellow]Could not reach the Ollama endpoint to fetch "
-                "models. Enter the model name manually.[/yellow]"
+                theme.warn("Could not reach the Ollama endpoint to fetch models. Enter the model name manually.")
             )
 
     # --- Any OpenAI-compatible endpoint: /v1/models ---------------------
     elif preset.is_openai_compat and base_url:
-        console.print(
-            f"\n[dim]Fetching available models from {preset.display_name} endpoint…[/dim]"
-        )
+        console.print()
+        console.print(theme.muted(f"Fetching available models from {preset.display_name} endpoint…"))
         live_models = _fetch_openai_compat_models(base_url, api_key_literal or "")
         if live_models:
             picked = _select_from_live_models(console, live_models, base_url)
@@ -453,21 +481,25 @@ def _prompt_model(
                 return picked
         else:
             console.print(
-                "[yellow]Could not fetch the model list from the endpoint "
-                "(network error, auth missing, or /models not implemented). "
-                "Enter the model name manually.[/yellow]"
+                theme.warn(
+                    "Could not fetch the model list from the endpoint "
+                    "(network error, auth missing, or /models not implemented). "
+                    "Enter the model name manually."
+                )
             )
 
     # --- Fallback: show suggestions + free-text prompt ------------------
     if preset.alt_models:
-        console.print("\n[dim]Common models for this provider:[/dim]")
-        console.print(f"[dim]  {preset.default_model} (default)[/dim]")
+        console.print()
+        console.print(theme.muted("Common models for this provider:"))
+        console.print(theme.muted(f"  {preset.default_model} (default)"))
         for alt in preset.alt_models:
-            console.print(f"[dim]  {alt}[/dim]")
+            console.print(theme.muted(f"  {alt}"))
 
     return Prompt.ask(
         "\nModel",
         default=preset.default_model,
+        console=console,
     ).strip()
 
 
@@ -480,18 +512,22 @@ def _print_config_preview(
 ) -> None:
     """Show the YAML that's about to be written, masking secrets."""
     masked = _mask_secret(api_key_literal)
-    lines = ["provider:"]
+    # Body as a Text (styled appends), so a bracket in a user-typed base_url /
+    # model / masked key renders verbatim instead of being parsed as markup.
+    body = Text("provider:", style="muted")
     if preset.auth_flow:
-        lines.append(f"  auth: {preset.auth_flow}")
+        body.append("\n  auth:     ")
+        body.append(str(preset.auth_flow), style="accent")
     if base_url:
-        lines.append(f"  base_url: {base_url}")
+        body.append("\n  base_url: ")
+        body.append(str(base_url), style="path")
     if masked:
-        lines.append(f"  api_key: {masked}")
-    lines.append(f"  model: {model}")
+        body.append("\n  api_key:  ")
+        body.append(str(masked), style="muted")
+    body.append("\n  model:    ")
+    body.append(str(model), style="accent")
 
-    console.print(
-        Panel("\n".join(lines), title=f"{preset.display_name} config", border_style="green")
-    )
+    console.print(theme.panel(body, title=f"{preset.display_name} config", kind="success"))
 
 
 def _mask_secret(value: str) -> str:
@@ -559,7 +595,28 @@ def _write_config(
     # Keep the in-memory Config object in sync for the current process.
     cli.config.set("provider", value=provider_section)
 
-    cli.console.print(f"\n[green]Wrote {path}[/green]")
+    cli.console.print()
+    wrote = theme.success("Wrote ")
+    wrote.append(str(path), style="path")
+    cli.console.print(wrote)
+
+
+def _print_test_failed(console: Console, exc: object) -> None:
+    """Report a failed health check. ``exc`` is escaped (theme.error), so an
+    exception message containing brackets never crashes the markup parser."""
+    console.print()  # break off the inline "Testing endpoint… " line
+    console.print(theme.error(f"Test failed: {exc}"))
+    console.print(
+        theme.warn("The config was still written. Run `acuario doctor` for a fuller diagnosis.")
+    )
+
+
+def _print_test_ok(console: Console, elapsed_ms: int, snippet: str) -> None:
+    """Report a passing health check. The LLM reply is appended as styled text
+    (not markup), so a bracket in the model's output renders verbatim."""
+    line = theme.success("ok")
+    line.append(f" ({elapsed_ms}ms, reply: {snippet!r})", style="muted")
+    console.print(line)
 
 
 def _run_test_invoke(
@@ -586,25 +643,21 @@ def _run_test_invoke(
             api_key=None,
             source="cli",
         )
-        console.print("\n[dim]Testing endpoint...[/dim]", end=" ")
+        console.print(theme.muted("Testing endpoint…"), end=" ")
         try:
             llm = ProviderManager.for_endpoint(endpoint).get_llm("default")
             start = time.monotonic()
             response = llm.invoke("Reply with exactly the word PONG.")
             elapsed_ms = int((time.monotonic() - start) * 1000)
         except Exception as exc:
-            console.print(f"\n[red]Test failed: {exc}[/red]")
-            console.print(
-                "[yellow]The config was still written. "
-                "Run `acuario doctor` for a fuller diagnosis.[/yellow]"
-            )
+            _print_test_failed(console, exc)
             return
 
         content = getattr(response, "content", str(response))
         if isinstance(content, list):
             content = " ".join(str(p) for p in content)
         snippet = str(content).strip()[:60]
-        console.print(f"[green]ok[/green] ({elapsed_ms}ms, reply: {snippet!r})")
+        _print_test_ok(console, elapsed_ms, snippet)
         return
 
     # Resolve the literal api_key if the user chose ${ENV_VAR} form
@@ -614,8 +667,10 @@ def _run_test_invoke(
         resolved_key = os.environ.get(env_name, "")
         if not resolved_key:
             console.print(
-                f"[yellow]Skipping test: ${env_name} is not set in this shell. "
-                "Export it and re-run, or use `acuario doctor`.[/yellow]"
+                theme.warn(
+                    f"Skipping test: ${env_name} is not set in this shell. "
+                    "Export it and re-run, or use `acuario doctor`."
+                )
             )
             return
 
@@ -638,22 +693,18 @@ def _run_test_invoke(
             source="cli",
         )
 
-    console.print("\n[dim]Testing endpoint...[/dim]", end=" ")
+    console.print(theme.muted("Testing endpoint…"), end=" ")
     try:
         llm = ProviderManager.for_endpoint(endpoint).get_llm("default")
         start = time.monotonic()
         response = llm.invoke("Reply with exactly the word PONG.")
         elapsed_ms = int((time.monotonic() - start) * 1000)
     except Exception as exc:
-        console.print(f"\n[red]Test failed: {exc}[/red]")
-        console.print(
-            "[yellow]The config was still written. "
-            "Run `acuario doctor` for a fuller diagnosis.[/yellow]"
-        )
+        _print_test_failed(console, exc)
         return
 
     content = getattr(response, "content", str(response))
     if isinstance(content, list):
         content = " ".join(str(p) for p in content)
     snippet = str(content).strip()[:60]
-    console.print(f"[green]ok[/green] ({elapsed_ms}ms, reply: {snippet!r})")
+    _print_test_ok(console, elapsed_ms, snippet)
